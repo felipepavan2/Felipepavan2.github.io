@@ -1,0 +1,24 @@
+# OS and editor clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+*.swp
+.vscode/
+.idea/
+
+# Office lock and temp files
+~$*
+*.tmp
+
+# Secrets and local config
+.env
+.env.*
+*.pem
+*.key
+
+# Generated audit output (contains details about the machine that ran it)
+system-audit-*.txt
+powertop-report-*.html
+windows-audit-*.txt
+*.log
