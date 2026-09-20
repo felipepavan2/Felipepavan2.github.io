@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" id="themeColor" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Home</title>
+<script>
+/* Apply saved theme + icon shape before first paint (no flash). */
+(function(){var r=document.documentElement,s=null;try{s=JSON.parse(localStorage.getItem('drawer.v1'))}catch(e){}
+r.dataset.shape=(s&&s.shape)||'squircle';if(s&&s.theme&&s.theme!=='system')r.dataset.theme=s.theme;})();
+</script>
+<style>
+:root{
+  color-scheme:light dark;
+  --bg:#F0F1F4; --fg:#15161A; --fg2:#6A6E78; --sheet:#FFFFFF;
+  --sock:rgba(0,0,0,.06); --line:rgba(0,0,0,.11); --btn:rgba(0,0,0,.05);
+  --danger:#C8423E; --shadow:0 14px 36px rgba(0,0,0,.22);
+  --icon:clamp(54px,15vw,66px);
+  --font:system-ui,-apple-system,Roboto,"Segoe UI",sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#000; --fg:#ECEAE4; --fg2:#8A8D93; --sheet:#17181B;
+    --sock:rgba(255,255,255,.075); --line:rgba(255,255,255,.13); --btn:rgba(255,255,255,.08);
+    --danger:#E8635F; --shadow:0 14px 36px rgba(0,0,0,.65);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#000; --fg:#ECEAE4; --fg2:#8A8D93; --sheet:#17181B;
+  --sock:rgba(255,255,255,.075); --line:rgba(255,255,255,.13); --btn:rgba(255,255,255,.08);
+  --danger:#E8635F; --shadow:0 14px 36px rgba(0,0,0,.65);
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{background:var(--bg)}
+body{
+  margin:0; min-height:100dvh; display:flex; flex-direction:column;
+  background:var(--bg); color:var(--fg); font-family:var(--font); font-size:14px;
+  padding:calc(env(safe-area-inset-top) + 10px) calc(14px + env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 6px) calc(14px + env(safe-area-inset-left));
+  -webkit-tap-highlight-color:transparent; -webkit-text-size-adjust:100%;
+}
+button{font-family:var(--font); cursor:pointer; touch-action:manipulation}
+:focus-visible{outline:2px solid var(--fg); outline-offset:2px}
+
+/* ---------- header ---------- */
+header{display:flex; align-items:flex-start; justify-content:space-between; padding:8px 6px 12px}
+.time{display:block; font-size:34px; font-weight:300; line-height:1; letter-spacing:-.02em; font-variant-numeric:tabular-nums}
+.date{display:block; margin-top:7px; font-size:11px; font-weight:500; letter-spacing:.14em; text-transform:uppercase; color:var(--fg2)}
+.actions{display:flex; gap:8px; align-items:center; margin-top:1px}
+.pill,.ib{height:36px; border:1px solid var(--line); background:transparent; color:var(--fg); border-radius:18px}
+.pill{padding:0 15px; font-size:13px; font-weight:500; min-width:66px}
+.ib{width:36px; display:grid; place-items:center; padding:0}
+.editing .pill{background:var(--fg); color:var(--bg); border-color:var(--fg)}
+.hint{margin:0 6px 14px; color:var(--fg2); font-size:14px; line-height:1.45; max-width:34ch}
+
+/* ---------- grid ---------- */
+.grid{
+  flex:1; display:grid; grid-template-columns:repeat(4,1fr); grid-template-rows:repeat(5,minmax(98px,1fr));
+  gap:2px; align-items:center;
+}
+.editing .grid{touch-action:none; user-select:none; -webkit-user-select:none}
+.cell{
+  position:relative; display:flex; flex-direction:column; align-items:center; justify-content:flex-start;
+  min-width:0; padding:8px 2px 4px; border-radius:18px; border:0; background:none;
+  color:inherit; text-decoration:none; text-align:center; -webkit-user-drag:none;
+}
+.cell:focus-visible{outline-offset:-2px}
+.ic{
+  position:relative; width:var(--icon); height:var(--icon); flex:none;
+  display:grid; place-items:center; overflow:hidden; background:var(--sock);
+  transition:transform .12s ease; -webkit-user-drag:none;
+}
+.ic img{width:100%; height:100%; display:block; object-fit:cover; pointer-events:none; -webkit-user-drag:none}
+.ic.remote img{width:62%; height:62%; object-fit:contain}
+.ic.mono{background:hsl(var(--h) 55% 87%); color:hsl(var(--h) 45% 30%); font-weight:600; font-size:calc(var(--icon)*.44); letter-spacing:-.02em; line-height:1}
+.lb{
+  margin-top:7px; font-size:12px; font-weight:500; line-height:1.25; letter-spacing:-.005em;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  max-width:100%; min-height:2.5em; overflow-wrap:anywhere; color:var(--fg); opacity:.92;
+}
+.cell:active .ic{transform:scale(.9)}
+.add .ic{color:var(--fg2)}
+.add .lb{color:var(--fg2)}
+.empty{visibility:hidden}
+.editing .empty{visibility:visible}
+.empty .ic{opacity:.55}
+.tile.ph .ic,.tile.ph .lb{opacity:.22}
+.editing .tile{cursor:grab}
+
+/* icon shapes (Android adaptive-icon masks) */
+[data-shape="squircle"] .ic{clip-path:url(#sq)}
+[data-shape="circle"] .ic{border-radius:50%}
+[data-shape="round"] .ic{border-radius:24%}
+[data-shape="drop"] .ic{clip-path:url(#td)}
+
+/* remove badge (edit mode) */
+.rm{
+  position:absolute; top:0; left:calc(50% - var(--icon)/2 - 9px); width:32px; height:32px;
+  border:0; background:transparent; padding:0; display:grid; place-items:center; z-index:2; color:var(--bg);
+}
+.rm span{width:22px; height:22px; border-radius:50%; background:var(--fg); border:2px solid var(--bg); display:grid; place-items:center}
+
+/* drag ghost */
+.ghost{
+  position:fixed; left:0; top:0; z-index:40; pointer-events:none; will-change:transform;
+  filter:drop-shadow(0 10px 18px rgba(0,0,0,.45));
+}
+
+/* ---------- sheets ---------- */
+dialog{
+  position:fixed; inset:auto 0 0 0; margin:0; width:100%; max-width:100%; max-height:92dvh;
+  border:0; border-radius:22px 22px 0 0; background:var(--sheet); color:var(--fg);
+  padding:12px 20px calc(18px + env(safe-area-inset-bottom)); box-shadow:var(--shadow); overflow:auto;
+}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+.grip{width:36px; height:4px; border-radius:2px; background:var(--line); margin:0 auto 16px}
+h2{font-size:17px; font-weight:600; margin:0 0 16px; letter-spacing:-.01em}
+h3{font-size:11px; font-weight:500; letter-spacing:.12em; text-transform:uppercase; color:var(--fg2); margin:22px 0 10px}
+h3:first-of-type{margin-top:0}
+.f{display:block; margin-bottom:14px}
+.f>span{display:block; font-size:11px; font-weight:500; letter-spacing:.12em; text-transform:uppercase; color:var(--fg2); margin-bottom:7px}
+input[type=text],input[type=url]{
+  width:100%; height:48px; border-radius:12px; border:1px solid var(--line); background:var(--btn);
+  color:var(--fg); padding:0 14px; font:16px var(--font); outline:none; -webkit-appearance:none;
+}
+input:focus-visible{border-color:var(--fg); outline:none}
+.err{color:var(--danger); font-size:13px; margin:-8px 0 12px; min-height:0}
+.iconrow{display:flex; gap:16px; align-items:center; margin:2px 0 12px}
+.iconrow .ic{--icon:64px}
+.chips{display:flex; flex-wrap:wrap; gap:8px}
+.chip{height:36px; padding:0 14px; border-radius:18px; border:1px solid var(--line); background:transparent; color:var(--fg); font-size:13px; font-weight:500}
+.status{font-size:13px; color:var(--fg2); min-height:18px; margin:0 0 16px}
+.primary{width:100%; height:50px; border-radius:14px; border:0; background:var(--fg); color:var(--bg); font-size:15px; font-weight:600}
+.quiet{width:100%; height:44px; border:0; background:transparent; color:var(--fg2); font-size:14px; font-weight:500; margin-top:4px}
+.quiet.danger{color:var(--danger)}
+.seg{display:flex; gap:6px}
+.seg button{flex:1; height:40px; border-radius:12px; border:1px solid var(--line); background:transparent; color:var(--fg); font-size:13px; font-weight:500}
+.seg button[aria-pressed="true"],.shapes button[aria-pressed="true"]{background:var(--fg); color:var(--bg); border-color:var(--fg)}
+.shapes{display:grid; grid-template-columns:repeat(4,1fr); gap:6px}
+.shapes button{display:flex; flex-direction:column; align-items:center; gap:8px; padding:12px 0 9px; border-radius:12px; border:1px solid var(--line); background:transparent; color:var(--fg); font-size:11px; font-weight:500}
+.sw{width:34px; height:34px; background:currentColor}
+.sw.squircle{clip-path:url(#sq)} .sw.circle{border-radius:50%} .sw.round{border-radius:24%} .sw.drop{clip-path:url(#td)}
+.row{display:flex; gap:8px; align-items:center}
+.row input{flex:1; height:44px; font-size:13px; font-family:ui-monospace,Menlo,monospace}
+.small{font-size:13px; color:var(--fg2); line-height:1.45; margin:8px 0 0}
+.stack{display:flex; flex-direction:column; gap:8px}
+.wide{height:44px; border-radius:12px; border:1px solid var(--line); background:transparent; color:var(--fg); font-size:14px; font-weight:500}
+
+/* snackbar */
+.snack{
+  position:fixed; left:50%; bottom:calc(18px + env(safe-area-inset-bottom)); transform:translateX(-50%);
+  background:var(--fg); color:var(--bg); border-radius:14px; padding:6px 6px 6px 16px;
+  display:flex; gap:10px; align-items:center; font-size:14px; box-shadow:var(--shadow); z-index:30;
+  max-width:calc(100vw - 32px); white-space:nowrap;
+}
+.snack span{overflow:hidden; text-overflow:ellipsis}
+.snack button{background:transparent; border:0; color:inherit; font-size:14px; font-weight:600; padding:10px 12px; border-radius:10px}
+
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <clipPath id="sq" clipPathUnits="objectBoundingBox"><path d="M.5 0C.125 0 0 .125 0 .5 0 .875 .125 1 .5 1 .875 1 1 .875 1 .5 1 .125 .875 0 .5 0Z"/></clipPath>
+    <clipPath id="td" clipPathUnits="objectBoundingBox"><path d="M.5 0C.875 0 1 .125 1 .5V1H.5C.125 1 0 .875 0 .5 0 .125 .125 0 .5 0Z"/></clipPath>
+  </defs>
+</svg>
+
+<header>
+  <div>
+    <time class="time" id="time" aria-live="off">--:--</time>
+    <span class="date" id="date"></span>
+  </div>
+  <div class="actions">
+    <button class="ib" id="gear" type="button" aria-label="Settings">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h8M18 7h2M4 17h2M12 17h8"/><circle cx="15" cy="7" r="2.5"/><circle cx="9" cy="17" r="2.5"/></svg>
+    </button>
+    <button class="pill" id="edit" type="button" aria-pressed="false">Edit</button>
+  </div>
+</header>
+
+<p class="hint" id="hint" hidden>Tap + to add a page you open often. Each one gets a name and an icon, saved on this phone.</p>
+
+<main class="grid" id="grid" aria-label="Your pages"></main>
+
+<!-- add / edit sheet -->
+<dialog id="sheet" aria-labelledby="sheetTitle">
+  <div class="grip"></div>
+  <form id="form" novalidate>
+    <h2 id="sheetTitle">Add page</h2>
+    <label class="f"><span>Web address</span>
+      <input id="url" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="example.com" required>
+    </label>
+    <div class="err" id="urlErr" role="alert"></div>
+    <label class="f"><span>Name</span>
+      <input id="name" type="text" autocomplete="off" maxlength="40" placeholder="Shown under the icon">
+    </label>
+    <div class="f"><span>Icon</span>
+      <div class="iconrow">
+        <div id="prev" aria-hidden="true"></div>
+        <div class="chips">
+          <button class="chip" type="button" id="findBtn">Find icon</button>
+          <button class="chip" type="button" id="imgBtn">Choose image</button>
+          <button class="chip" type="button" id="letterBtn">Use letter</button>
+        </div>
+      </div>
+      <div class="status" id="status">The icon is found automatically after you save.</div>
+    </div>
+    <input type="file" id="file" accept="image/*" hidden>
+    <button class="primary" type="submit" id="saveBtn">Add page</button>
+    <button class="quiet danger" type="button" id="removeBtn" hidden>Remove page</button>
+    <button class="quiet" type="button" id="cancelBtn">Cancel</button>
+  </form>
+</dialog>
+
+<!-- settings sheet -->
+<dialog id="settings" aria-labelledby="setTitle">
+  <div class="grip"></div>
+  <h2 id="setTitle">Settings</h2>
+
+  <h3>Icon shape</h3>
+  <div class="shapes" id="shapes" role="group" aria-label="Icon shape">
+    <button type="button" data-shape="squircle"><span class="sw squircle"></span>Squircle</button>
+    <button type="button" data-shape="circle"><span class="sw circle"></span>Circle</button>
+    <button type="button" data-shape="round"><span class="sw round"></span>Rounded</button>
+    <button type="button" data-shape="drop"><span class="sw drop"></span>Teardrop</button>
+  </div>
+
+  <h3>Appearance</h3>
+  <div class="seg" id="themes" role="group" aria-label="Appearance">
+    <button type="button" data-theme="system">System</button>
+    <button type="button" data-theme="dark">Dark</button>
+    <button type="button" data-theme="light">Light</button>
+  </div>
+
+  <h3>Homepage address</h3>
+  <div class="row">
+    <input type="text" id="addr" readonly aria-label="This page's address">
+    <button class="chip" type="button" id="copyBtn">Copy</button>
+  </div>
+  <p class="small">Chrome: ⋮ › Settings › Homepage › turn it on › Enter custom web address › paste this.</p>
+
+  <h3>Icons and backup</h3>
+  <div class="stack">
+    <button class="wide" type="button" id="refreshBtn">Refresh all icons</button>
+    <button class="wide" type="button" id="exportBtn">Export pages and icons</button>
+    <button class="wide" type="button" id="importBtn">Import a backup…</button>
+    <input type="file" id="importFile" accept="application/json,.json" hidden>
+  </div>
+  <p class="small" id="slots"></p>
+
+  <button class="quiet danger" type="button" id="resetBtn">Remove all pages</button>
+  <button class="quiet" type="button" id="setClose">Close</button>
+</dialog>
+
+<div class="snack" id="snack" role="status" hidden><span id="snackMsg"></span><button type="button" id="snackBtn">Undo</button></div>
+
+<script>
+(() => {
+'use strict';
+const SLOTS = 20, KEY = 'drawer.v1', IK = 'drawer.icon.';
+const $ = s => document.querySelector(s);
+const grid = $('#grid'), hint = $('#hint'), body = document.body;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const PLUS = '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+const MINUS = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>';
+
+/* ---------- state ---------- */
+function load(){
+  try{ const s = JSON.parse(localStorage.getItem(KEY)); if (s && Array.isArray(s.links)) return Object.assign({shape:'squircle', theme:'system'}, s); }catch(e){}
+  return {links:[], shape:'squircle', theme:'system'};
+}
+let state = load();
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){ toast('Couldn’t save — storage is full or blocked.'); } }
+const getIcon = id => { try{ return localStorage.getItem(IK + id); }catch(e){ return null; } };
+const setIcon = (id, d) => { try{ d ? localStorage.setItem(IK + id, d) : localStorage.removeItem(IK + id); }catch(e){ toast('Icon not saved — storage is full.'); } };
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+const hostOf = u => { try{ return new URL(u).hostname.replace(/^www\./, ''); }catch(e){ return ''; } };
+function hue(s){ let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 360; }
+const HOSTS = {'mail.google.com':'Gmail','maps.google.com':'Maps','drive.google.com':'Drive','docs.google.com':'Docs','calendar.google.com':'Calendar','photos.google.com':'Photos','translate.google.com':'Translate','news.google.com':'Google News','music.youtube.com':'YouTube Music','web.whatsapp.com':'WhatsApp','outlook.office.com':'Outlook','outlook.live.com':'Outlook','teams.microsoft.com':'Teams','web.telegram.org':'Telegram','mail.proton.me':'Proton Mail'};
+const BRANDS = {youtube:'YouTube',github:'GitHub',gitlab:'GitLab',linkedin:'LinkedIn',whatsapp:'WhatsApp',tiktok:'TikTok',chatgpt:'ChatGPT',openai:'OpenAI',icloud:'iCloud',ebay:'eBay',paypal:'PayPal',onedrive:'OneDrive',sharepoint:'SharePoint',wordpress:'WordPress',duckduckgo:'DuckDuckGo',stackoverflow:'Stack Overflow',imdb:'IMDb',bbc:'BBC',nos:'NOS',nu:'NU.nl',ns:'NS',ing:'ING',kpn:'KPN',rtl:'RTL',npo:'NPO',anwb:'ANWB',knmi:'KNMI',ah:'Albert Heijn',bol:'bol',x:'X'};
+function nameFrom(host){
+  if (!host) return '';
+  if (HOSTS[host]) return HOSTS[host];
+  if (/^[\d.:\[\]]+$/.test(host)) return host;
+  const p = host.split('.'); let n = p[0];
+  if (p.length >= 3 && /^(co|com|org|net|gov|edu|ac|or|ne)$/.test(p[p.length - 2])) n = p[p.length - 3];
+  else if (p.length >= 2) n = p[p.length - 2];
+  return BRANDS[n] || n.charAt(0).toUpperCase() + n.slice(1);
+}
+function normalizeUrl(v){
+  v = String(v || '').trim(); if (!v) return null;
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(v)) v = 'https://' + v;
+  try{ const u = new URL(v); if (!/^https?:$/.test(u.protocol) || !u.hostname.includes('.') && u.hostname !== 'localhost') return null; return u.href; }catch(e){ return null; }
+}
+
+/* ---------- render ---------- */
+function monoHTML(name, url){
+  const host = hostOf(url), ch = (name || host || '?').trim().charAt(0).toUpperCase();
+  return `<span class="ic mono" style="--h:${hue(host || name)}">${esc(ch)}</span>`;
+}
+function iconHTML(l){
+  if (!l.noicon){
+    const d = getIcon(l.id);
+    if (d) return `<span class="ic"><img alt="" src="${d}" width="128" height="128" draggable="false"></span>`;
+    if (l.remote) return `<span class="ic remote"><img alt="" src="${esc(l.remote)}" referrerpolicy="no-referrer" draggable="false"></span>`;
+  }
+  return monoHTML(l.name, l.url);
+}
+/* a web-loaded icon that fails to load falls back to the letter tile */
+grid.addEventListener('error', e => {
+  const img = e.target; if (!img || img.tagName !== 'IMG') return;
+  const tile = img.closest('.tile'), ic = img.closest('.ic'), l = tile && state.links[+tile.dataset.i];
+  if (l && ic) ic.outerHTML = monoHTML(l.name, l.url);
+}, true);
+function render(){
+  const L = state.links; let html = '';
+  for (let i = 0; i < SLOTS; i++){
+    const l = L[i];
+    if (l){
+      const ic = iconHTML(l), lb = `<span class="lb">${esc(l.name)}</span>`;
+      html += editing
+        ? `<div class="cell tile" role="button" tabindex="0" data-i="${i}" aria-label="Edit ${esc(l.name)}">${ic}${lb}<button class="rm" type="button" data-i="${i}" aria-label="Remove ${esc(l.name)}"><span>${MINUS}</span></button></div>`
+        : `<a class="cell tile" href="${esc(l.url)}" data-i="${i}" draggable="false">${ic}${lb}</a>`;
+    } else if (i === L.length){
+      html += `<button class="cell add" type="button" aria-label="Add a page"><span class="ic">${PLUS}</span><span class="lb">Add page</span></button>`;
+    } else {
+      html += `<div class="cell empty" aria-hidden="true"><span class="ic"></span></div>`;
+    }
+  }
+  grid.innerHTML = html;
+  hint.hidden = L.length > 0;
+}
+
+/* ---------- edit mode ---------- */
+let editing = false;
+const editBtn = $('#edit');
+function setEditing(v){
+  editing = v; body.classList.toggle('editing', v);
+  editBtn.textContent = v ? 'Done' : 'Edit'; editBtn.setAttribute('aria-pressed', String(v));
+  render();
+}
+editBtn.addEventListener('click', () => setEditing(!editing));
+
+let suppressClick = false;
+grid.addEventListener('click', e => {
+  if (suppressClick){ e.preventDefault(); return; }
+  const rm = e.target.closest('.rm'); if (rm){ e.preventDefault(); remove(+rm.dataset.i); return; }
+  if (e.target.closest('.add')){ openSheet(-1); return; }
+  const t = e.target.closest('.tile'); if (t && editing) openSheet(+t.dataset.i);
+});
+grid.addEventListener('keydown', e => {
+  if (editing && (e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('tile')){ e.preventDefault(); openSheet(+e.target.dataset.i); }
+});
+grid.addEventListener('contextmenu', e => { if (editing) e.preventDefault(); });
+
+/* drag to reorder (edit mode) */
+let drag = null, ghost = null, rects = null;
+grid.addEventListener('pointerdown', e => {
+  if (!editing || e.button !== 0) return;
+  const t = e.target.closest('.tile'); if (!t || e.target.closest('.rm')) return;
+  drag = {i: +t.dataset.i, x: e.clientX, y: e.clientY, id: e.pointerId, on: false};
+});
+grid.addEventListener('pointermove', e => {
+  if (!drag || e.pointerId !== drag.id) return;
+  if (!drag.on){ if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 8) return; startDrag(); }
+  ghost.style.transform = `translate(${e.clientX}px,${e.clientY}px) translate(-50%,-50%) scale(1.1)`;
+  const j = slotAt(e.clientX, e.clientY); if (j < 0) return;
+  const to = Math.min(j, state.links.length - 1);
+  if (to !== drag.i){
+    const [it] = state.links.splice(drag.i, 1); state.links.splice(to, 0, it); drag.i = to;
+    render(); markPh();
+  }
+});
+function endDrag(e){
+  if (!drag || e.pointerId !== drag.id) return;
+  if (drag.on){
+    suppressClick = true; setTimeout(() => suppressClick = false, 350);
+    ghost.remove(); ghost = null;
+    try{ grid.releasePointerCapture(drag.id); }catch(err){}
+    save(); render();
+  }
+  drag = null;
+}
+grid.addEventListener('pointerup', endDrag);
+grid.addEventListener('pointercancel', endDrag);
+function startDrag(){
+  drag.on = true;
+  try{ grid.setPointerCapture(drag.id); }catch(err){}
+  rects = [...grid.children].map(c => c.getBoundingClientRect());
+  const ic = grid.children[drag.i].querySelector('.ic');
+  ghost = document.createElement('div'); ghost.className = 'ghost'; ghost.innerHTML = ic.outerHTML;
+  body.appendChild(ghost); markPh();
+}
+function markPh(){ const t = grid.children[drag.i]; if (t) t.classList.add('ph'); }
+function slotAt(x, y){
+  for (let k = 0; k < rects.length; k++){ const r = rects[k]; if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return k; }
+  return -1;
+}
+
+/* ---------- remove + undo ---------- */
+let undo = null;
+function remove(i){
+  const [l] = state.links.splice(i, 1); if (!l) return;
+  undo = {l, i, icon: getIcon(l.id)}; setIcon(l.id, null); save(); render();
+  snack(`Removed ${l.name}`, 'Undo', () => {
+    if (!undo) return;
+    state.links.splice(Math.min(undo.i, state.links.length), 0, undo.l);
+    if (undo.icon) setIcon(undo.l.id, undo.icon);
+    undo = null; save(); render();
+  });
+}
+
+/* ---------- snackbar ---------- */
+const snackEl = $('#snack'), snackMsg = $('#snackMsg'), snackBtn = $('#snackBtn');
+let snackFn = null, snackT = 0;
+function snack(msg, action, fn){
+  snackMsg.textContent = msg; snackBtn.hidden = !action; snackBtn.textContent = action || ''; snackFn = fn || null;
+  snackEl.hidden = false; clearTimeout(snackT); snackT = setTimeout(hideSnack, 5000);
+}
+function hideSnack(){ snackEl.hidden = true; snackFn = null; }
+snackBtn.addEventListener('click', () => { const f = snackFn; hideSnack(); if (f) f(); });
+const toast = m => snack(m);
+
+/* ---------- icons: fetch, compose, store ---------- */
+/* Providers are tried in order. A provider that allows cross-origin reads lets the icon be
+   composed and SAVED on the phone. If every provider refuses (CORS) while online, the icon is
+   shown straight from the web instead and the browser's cache keeps it. */
+const PROVIDERS = [
+  h => `https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&url=https://${h}&size=128`,
+  h => `https://icons.duckduckgo.com/ip3/${h}.ico`,
+  h => `https://icon.horse/icon/${h}`,
+  h => `https://favicone.com/${h}?s=128`,
+  h => `https://unavatar.io/${h}?fallback=false`,
+  h => `https://www.google.com/s2/favicons?domain=${h}&sz=128`,
+];
+const REMOTE = h => `https://www.google.com/s2/favicons?domain=${h}&sz=128`;
+async function fetchIcon(host){
+  if (!host) return null;
+  let blocked = false;
+  for (const p of PROVIDERS){
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 7000);
+    try{
+      const r = await fetch(p(host), {mode:'cors', signal: ctl.signal, referrerPolicy:'no-referrer'});
+      clearTimeout(t);
+      if (!r.ok) continue;
+      const b = await r.blob();
+      if (b.size < 80 || !/^image\//.test(b.type)) continue;
+      const img = await blobToImg(b);
+      if ((img.naturalWidth || 0) < 24 && !/svg/.test(b.type)) continue;   /* generic 16px placeholders */
+      const out = compose(img); if (out) return {data: out};
+    }catch(e){ clearTimeout(t); if (e && e.name !== 'AbortError') blocked = true; }
+  }
+  if (blocked && navigator.onLine !== false) return {remote: REMOTE(host)};
+  return null;
+}
+function blobToImg(b){
+  return new Promise((res, rej) => {
+    const u = URL.createObjectURL(b), i = new Image();
+    i.onload = () => { URL.revokeObjectURL(u); res(i); };
+    i.onerror = () => { URL.revokeObjectURL(u); rej(new Error('decode')); };
+    i.src = u;
+  });
+}
+function rgb2hsl(r, g, b){
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2; let h = 0, s = 0;
+  if (mx !== mn){
+    const d = mx - mn; s = l > .5 ? d / (2 - mx - mn) : d / (mx + mn);
+    h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; h *= 60;
+  }
+  return [h, s, l];
+}
+/* Turns any favicon/image into a 128px "app icon": full-bleed if it is already a solid square,
+   otherwise centred on a tile tinted from the image's own dominant hue. */
+function compose(img){
+  const S = 128, iw = img.naturalWidth || 128, ih = img.naturalHeight || 128, n = 24;
+  const sc = document.createElement('canvas'); sc.width = sc.height = n;
+  const sx = sc.getContext('2d', {willReadFrequently: true});
+  sx.drawImage(img, 0, 0, n, n);
+  let d; try{ d = sx.getImageData(0, 0, n, n).data; }catch(e){ return null; }
+  const bins = new Float64Array(12), br = new Float64Array(12), bg = new Float64Array(12), bb = new Float64Array(12);
+  let opaque = 0, lsum = 0, lw = 0;
+  for (let i = 0; i < d.length; i += 4){
+    const a = d[i + 3] / 255; if (a > .8) opaque++; if (a < .2) continue;
+    const r = d[i] / 255, g = d[i + 1] / 255, b = d[i + 2] / 255, [h, s, l] = rgb2hsl(r, g, b);
+    lsum += l * a; lw += a;
+    const w = a * (s + .04), k = Math.floor(h / 30) % 12;
+    bins[k] += w; br[k] += r * w; bg[k] += g * w; bb[k] += b * w;
+  }
+  let best = 0; for (let k = 1; k < 12; k++) if (bins[k] > bins[best]) best = k;
+  let H = 0, Sat = 0;
+  if (bins[best] > 0){ const [h, s] = rgb2hsl(br[best] / bins[best], bg[best] / bins[best], bb[best] / bins[best]); H = Math.round(h); Sat = s; }
+  const L = lw ? lsum / lw : .5, full = opaque / (n * n) >= .9;
+  const c = document.createElement('canvas'); c.width = c.height = S; const x = c.getContext('2d');
+  x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high';
+  if (full){
+    const s = Math.max(S / iw, S / ih), w = iw * s, h = ih * s; x.drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
+  } else {
+    x.fillStyle = L < .72 ? `hsl(${H} ${Math.round(Math.min(Sat, .6) * 100)}% 88%)` : `hsl(${H} ${Math.round(Math.min(Sat, .45) * 100)}% 22%)`;
+    x.fillRect(0, 0, S, S);
+    const box = S * .6, s = Math.min(box / iw, box / ih), w = iw * s, h = ih * s; x.drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
+  }
+  let out = c.toDataURL('image/webp', .88); if (!out.startsWith('data:image/webp')) out = c.toDataURL('image/png');
+  return out;
+}
+function fileToIcon(file){ return blobToImg(file).then(compose); }
+async function autoFetch(id){
+  const l0 = state.links.find(x => x.id === id); if (!l0 || l0.noicon) return;
+  const res = await fetchIcon(hostOf(l0.url));
+  const l = state.links.find(x => x.id === id); if (!l || l.noicon) return;
+  if (res && res.data){ setIcon(l.id, res.data); delete l.remote; delete l.tried; }
+  else if (res && res.remote && !getIcon(l.id)){ l.remote = res.remote; delete l.tried; }
+  else { l.tried = Date.now(); save(); return; }          /* nothing found: retry at most once a day */
+  save(); if (!drag) render();
+}
+/* pages added while offline (or whose icon failed) get another quiet attempt at load */
+async function retryMissing(){
+  if (navigator.onLine === false) return;
+  const day = 864e5, todo = state.links.filter(l => !l.noicon && !l.remote && !getIcon(l.id) && !(l.tried && Date.now() - l.tried < day));
+  for (const l of todo) await autoFetch(l.id);
+}
+
+/* ---------- add / edit sheet ---------- */
+const sheet = $('#sheet'), form = $('#form'), urlIn = $('#url'), nameIn = $('#name'), urlErr = $('#urlErr'),
+      prev = $('#prev'), status = $('#status'), saveBtn = $('#saveBtn'), removeBtn = $('#removeBtn'), fileIn = $('#file');
+let cur = -1, pend = null, lastSuggest = '', finding = 0;
+
+function openSheet(i){
+  cur = i; finding++;
+  const l = i >= 0 ? state.links[i] : null;
+  $('#sheetTitle').textContent = l ? 'Edit page' : 'Add page';
+  saveBtn.textContent = l ? 'Save changes' : 'Add page';
+  removeBtn.hidden = !l;
+  urlIn.value = l ? l.url : ''; nameIn.value = l ? l.name : ''; lastSuggest = ''; urlErr.textContent = '';
+  pend = {icon: l && !l.noicon ? getIcon(l.id) : null, remote: l && !l.noicon ? l.remote : null, noicon: !!(l && l.noicon), changed: false};
+  status.textContent = !l ? 'The icon is found automatically after you save.'
+    : (!pend.icon && pend.remote) ? 'This icon loads from the web; your browser keeps a cached copy.' : '';
+  drawPrev(); sheet.showModal();
+  if (!l) setTimeout(() => urlIn.focus(), 50);
+}
+function drawPrev(){
+  const url = normalizeUrl(urlIn.value) || '', host = hostOf(url), nm = nameIn.value.trim() || nameFrom(host);
+  prev.innerHTML = pend.noicon ? monoHTML(nm, url)
+    : pend.icon ? `<span class="ic"><img alt="" src="${pend.icon}" draggable="false"></span>`
+    : pend.remote ? `<span class="ic remote"><img alt="" src="${esc(pend.remote)}" referrerpolicy="no-referrer" draggable="false"></span>`
+    : monoHTML(nm, url);
+}
+urlIn.addEventListener('input', () => {
+  urlErr.textContent = '';
+  const host = hostOf(normalizeUrl(urlIn.value) || ''), sug = nameFrom(host);
+  if (nameIn.value.trim() === '' || nameIn.value === lastSuggest){ nameIn.value = sug; lastSuggest = sug; }
+  if (!pend.icon && !pend.remote) drawPrev();
+});
+nameIn.addEventListener('input', () => { if ((!pend.icon && !pend.remote) || pend.noicon) drawPrev(); });
+
+$('#findBtn').addEventListener('click', async () => {
+  const u = normalizeUrl(urlIn.value); if (!u){ urlErr.textContent = 'Enter a web address first, like example.com'; urlIn.focus(); return; }
+  const my = ++finding; status.textContent = 'Looking for an icon…';
+  const res = await fetchIcon(hostOf(u)); if (my !== finding) return;
+  if (res && res.data){ pend = {icon: res.data, remote: null, noicon: false, changed: true}; status.textContent = 'Icon found and saved on this phone.'; }
+  else if (res && res.remote){ pend = {icon: null, remote: res.remote, noicon: false, changed: true}; status.textContent = 'Icon found. It loads from the web; your browser keeps a cached copy.'; }
+  else status.textContent = navigator.onLine === false ? 'No internet connection. The first letter will be used for now.' : 'No icon found online. The first letter will be used, or choose an image.';
+  drawPrev();
+});
+$('#imgBtn').addEventListener('click', () => fileIn.click());
+fileIn.addEventListener('change', async () => {
+  const f = fileIn.files[0]; fileIn.value = ''; if (!f) return;
+  try{ const d = await fileToIcon(f); if (!d) throw 0; pend = {icon: d, remote: null, noicon: false, changed: true}; status.textContent = 'Image ready.'; }
+  catch(e){ status.textContent = 'That image couldn’t be read. Try a PNG or JPG.'; }
+  drawPrev();
+});
+$('#letterBtn').addEventListener('click', () => { pend = {icon: null, remote: null, noicon: true, changed: true}; status.textContent = 'The first letter of the name will be used.'; drawPrev(); });
+$('#cancelBtn').addEventListener('click', () => sheet.close());
+removeBtn.addEventListener('click', () => { sheet.close(); if (cur >= 0) remove(cur); });
+sheet.addEventListener('close', () => { finding++; pend = null; });
+
+form.addEventListener('submit', e => {
+  e.preventDefault();
+  const url = normalizeUrl(urlIn.value);
+  if (!url){ urlErr.textContent = 'Enter a web address like example.com'; urlIn.focus(); return; }
+  const host = hostOf(url), name = (nameIn.value.trim() || nameFrom(host) || host).slice(0, 40);
+  let l;
+  if (cur < 0){
+    if (state.links.length >= SLOTS){ sheet.close(); toast('All 20 slots are full. Remove a page first.'); return; }
+    l = {id: uid(), name, url, noicon: pend.noicon};
+    if (!pend.noicon){ if (pend.icon) setIcon(l.id, pend.icon); else if (pend.remote) l.remote = pend.remote; }
+    state.links.push(l);
+  } else {
+    l = state.links[cur];
+    const hostChanged = hostOf(l.url) !== host;
+    l.name = name; l.url = url; l.noicon = pend.noicon;
+    if (pend.changed){ setIcon(l.id, pend.noicon ? null : pend.icon); l.remote = (!pend.noicon && !pend.icon && pend.remote) || undefined; }
+    else if (hostChanged && !l.noicon){ setIcon(l.id, null); l.remote = undefined; }
+  }
+  if (!l.noicon) delete l.noicon; if (!l.remote) delete l.remote; delete l.tried;
+  save(); render(); sheet.close();
+  if (!l.noicon && !l.remote && !getIcon(l.id)) autoFetch(l.id);
+});
+
+/* ---------- settings ---------- */
+const settings = $('#settings');
+function applyPrefs(){
+  const r = document.documentElement;
+  if (state.theme === 'system') r.removeAttribute('data-theme'); else r.dataset.theme = state.theme;
+  r.dataset.shape = state.shape;
+  const dark = state.theme === 'dark' || (state.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+  $('#themeColor').content = dark ? '#000000' : '#F0F1F4';
+  for (const b of $('#shapes').children) b.setAttribute('aria-pressed', String(b.dataset.shape === state.shape));
+  for (const b of $('#themes').children) b.setAttribute('aria-pressed', String(b.dataset.theme === state.theme));
+}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyPrefs);
+$('#shapes').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; state.shape = b.dataset.shape; save(); applyPrefs(); });
+$('#themes').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; state.theme = b.dataset.theme; save(); applyPrefs(); });
+$('#gear').addEventListener('click', () => {
+  $('#addr').value = location.href;
+  $('#slots').textContent = `${state.links.length} of ${SLOTS} slots used.`;
+  resetArmed = false; $('#resetBtn').textContent = 'Remove all pages';
+  settings.showModal();
+});
+$('#setClose').addEventListener('click', () => settings.close());
+$('#copyBtn').addEventListener('click', async () => {
+  const a = $('#addr'); a.select();
+  try{ await navigator.clipboard.writeText(a.value); toast('Address copied.'); }
+  catch(e){ try{ document.execCommand('copy'); toast('Address copied.'); }catch(err){ toast('Long-press the address to copy it.'); } }
+});
+$('#refreshBtn').addEventListener('click', async e => {
+  const b = e.currentTarget, todo = state.links.filter(l => !l.noicon); if (!todo.length) return;
+  b.disabled = true; let n = 0, ok = 0;
+  for (const l of todo){
+    b.textContent = `Refreshing ${++n} of ${todo.length}…`;
+    const res = await fetchIcon(hostOf(l.url)); if (!res) continue;
+    if (res.data){ setIcon(l.id, res.data); delete l.remote; ok++; }
+    else if (res.remote && !getIcon(l.id)){ l.remote = res.remote; ok++; }
+  }
+  b.disabled = false; b.textContent = 'Refresh all icons'; save(); render();
+  toast(ok ? `Updated ${ok} icon${ok === 1 ? '' : 's'}.` : 'No icons could be fetched right now.');
+});
+$('#exportBtn').addEventListener('click', () => {
+  const data = {v: 1, app: 'drawer', exported: new Date().toISOString(), shape: state.shape, theme: state.theme,
+    links: state.links.map(l => Object.assign({}, l, {icon: getIcon(l.id) || undefined}))};
+  const blob = new Blob([JSON.stringify(data)], {type: 'application/json'}), u = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = u; a.download = 'home-backup.json'; body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 3000);
+});
+$('#importBtn').addEventListener('click', () => $('#importFile').click());
+$('#importFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try{
+    const d = JSON.parse(await f.text()); if (!d || !Array.isArray(d.links)) throw 0;
+    for (const l of state.links) setIcon(l.id, null);
+    state.links = d.links.slice(0, SLOTS).map(l => {
+      const id = String(l.id || uid()), url = normalizeUrl(String(l.url || ''));
+      if (url && l.icon) setIcon(id, l.icon);
+      const o = {id, url, name: String(l.name || nameFrom(hostOf(url || ''))).slice(0, 40)};
+      if (l.noicon) o.noicon = true; if (typeof l.remote === 'string' && /^https:/.test(l.remote)) o.remote = l.remote;
+      return o;
+    }).filter(l => l.url);
+    if (d.shape) state.shape = d.shape; if (d.theme) state.theme = d.theme;
+    save(); applyPrefs(); render(); settings.close(); toast(`Imported ${state.links.length} page${state.links.length === 1 ? '' : 's'}.`);
+  }catch(err){ toast('That file isn’t a backup from this page.'); }
+});
+let resetArmed = false, resetT = 0;
+$('#resetBtn').addEventListener('click', e => {
+  const b = e.currentTarget;
+  if (!resetArmed){ resetArmed = true; b.textContent = 'Tap again to remove everything'; clearTimeout(resetT); resetT = setTimeout(() => { resetArmed = false; b.textContent = 'Remove all pages'; }, 3500); return; }
+  for (const l of state.links) setIcon(l.id, null);
+  state.links = []; save(); render(); settings.close(); setEditing(false); toast('All pages removed.');
+});
+
+/* ---------- clock ---------- */
+const tEl = $('#time'), dEl = $('#date');
+function tick(){
+  const n = new Date();
+  tEl.textContent = n.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+  tEl.dateTime = n.toISOString();
+  dEl.textContent = n.toLocaleDateString([], {weekday: 'long', day: 'numeric', month: 'long'});
+  setTimeout(tick, 60000 - (n.getSeconds() * 1000 + n.getMilliseconds()) + 40);
+}
+
+/* ---------- boot ---------- */
+applyPrefs(); render(); tick();
+setTimeout(retryMissing, 1200);
+addEventListener('online', retryMissing);
+})();
+</script>
+</body>
+</html>
