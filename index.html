@@ -17,10 +17,15 @@
    page once more, to see the new copy.
 
    - Header: clock and date, updated every minute.
-   - Grid: up to 20 shortcuts (4 columns x 5 rows), filled from the bottom
-     row so the first tiles sit under the thumb (Settings > Layout switches
-     to the top). Edit mode: tap a tile to edit it, its minus badge to
-     remove it (with Undo), drag to reorder.
+   - Grid: shortcuts in 4 columns x 5 rows to start with (2 to 8 columns by
+     1 to 10 rows), filled from the bottom row so the first tiles sit under
+     the thumb (Settings > Layout switches to the top). An icon is drawn
+     smaller by itself when its slot cannot hold the size asked for, and
+     a row is added only while the grid still fits the screen.
+   - Edit mode: tap a tile to edit it, its minus badge to remove it (with
+     Undo), drag to reorder. The clock makes way for three steppers (icon
+     size, columns, rows), and "Sort A–Z" (with Undo) joins the bar under
+     the grid.
    - Bar under the grid: Notes (with a dot when a note arrived since Notes
      was last open on this device), Settings, Edit.
    - Add/Edit sheet: web address, name (suggested from the address), icon
@@ -46,13 +51,15 @@
    HEAD     pre-paint script: applies the saved theme, icon shape and layout
             before the first paint, so the page's colours never flash (the
             browser bar colour follows once the main script runs).
-   STYLE    "design tokens" > "header" > "grid" > "sheets" > "notes sheet"
-            ("files", "selecting notes to delete", "composer", "passphrase
-            sheet") > "snackbar"
-   BODY     SVG clip paths > header > #hint > #grid > .actions > dialogs
-            #sheet (add/edit), #settings, #notes, #passSheet > #snack
+   STYLE    "design tokens" > "header" ("edit-mode tools") > "grid" >
+            "sheets" > "notes sheet" ("files", "selecting notes to delete",
+            "composer", "passphrase sheet") > "snackbar"
+   BODY     SVG clip paths > header (clock, #tools) > #hint > #grid >
+            .actions > dialogs #sheet (add/edit), #settings, #notes,
+            #passSheet > #snack
    SCRIPT   NOTES_DB > "state" > "render" > "edit mode" (drag to reorder)
-            > "remove + undo" > "snackbar" > "icons" > "add / edit sheet"
+            > "layout tools" > "remove + undo" > "snackbar" > "icons" >
+            "add / edit sheet"
             > "settings" > "notes" ("shared key", "stream", "encryption",
             "key storage", "the list", "sending", "downloading", "selecting
             and deleting", "passphrase sheet", "composer, copying and
@@ -64,12 +71,13 @@
    and any script on one of them can read it, so every key here starts
    with "drawer.".
    localStorage
-   drawer.v1             {links: [...], shape, theme, fill}: grid and
-                         settings. A link is {id, name, url, noicon?,
-                         remote?, tried?}: noicon = show the letter; remote
-                         = icon URL shown straight from the web; tried =
-                         time of the last failed icon search (retried at
-                         most once a day).
+   drawer.v1             {links: [...], shape, theme, fill, cols, rows,
+                         size}: grid and settings. cols x rows is the
+                         layout, size the icon size in % (60 to 160). A
+                         link is {id, name, url, noicon?, remote?, tried?}:
+                         noicon = show the letter; remote = icon URL shown
+                         straight from the web; tried = time of the last
+                         failed icon search (retried at most once a day).
    drawer.icon.<id>      a link's icon: a 128 px WebP (or PNG) data URL
                          made here, or whatever string a backup carried
                          (see KNOWN LIMITS).
@@ -96,8 +104,10 @@
    Cache "drawer.home-v1": a copy of this page, kept by sw.js.
    Renaming a key loses that data on every device: migrate it instead.
    Backup file (Settings > Export): {v: 1, app: "drawer", exported, shape,
-   theme, fill, links: [link + its icon]}. Notes, the shared key and the
-   passphrase aren't in it.
+   theme, fill, cols, rows, size, links: [link + its icon]}. Notes, the
+   shared key and the passphrase aren't in it. A backup without a layout
+   (made by an earlier version) keeps the layout of the device it is
+   imported on, with rows added if its pages need them.
 
  FIREBASE (notes and files)
    NOTES_DB, near the top of the script, holds the database address, e.g.
@@ -279,12 +289,23 @@
    prefers-color-scheme block and [data-theme="dark"]): change both. The
    page background is also a literal in the theme-color meta tag and in
    applyPrefs(), which colours the browser bar.
+   The layout reaches the CSS as three variables that applyPrefs() sets on
+   the root element (cols, rows, scale). Inside the grid every cell works
+   out its own slot from them and from the size of the grid (container
+   query units) and fits its icon to it, so the script never measures
+   anything to lay the tiles out; it measures one icon only to show the
+   size in Edit mode.
    interactive-widget=resizes-content in the viewport tag shrinks the page
    when the keyboard opens, so the notes text field stays in view.
 
  COMMON CHANGES
-   More or fewer tiles: COLS and ROWS in the script and the grid's columns
-     and rows in CSS (repeat(4, ...) and repeat(5, ...)).
+   More or fewer tiles: Edit > Columns and Rows. Their limits are MINC,
+     MAXC, MINR and MAXR in the script, the icon size limits MINS and MAXS;
+     what a new device starts with (4 x 5 at 100%) is in load().
+   Icon size at 100%: the "base" variable in the design tokens.
+   Room around an icon: a tile is its icon plus 49px (see "grid" in the
+     CSS); a change to the cell padding or the label must change that 49
+     and the 51 (49 + the 2px gap) in the grid's min-height.
    A new field on notes: write it in nPostText()/nPostFile() (and in
      nPostEdit() if it can change), read it in nItems(), show it in
      nRender()/nFileBub(), and allow it in the rules.
@@ -325,6 +346,13 @@
       stays readable and sending says it's offline.
    7. Settings: switch the theme, shape and layout; export, then import a
       backup. Commit a change: the next open offers "Reload".
+   8. Edit: Sort A–Z, then Undo. Step the icon size, columns and rows up
+      and down: nothing overlaps, the page never starts to scroll, and a
+      layout too small for the pages, or a row too many for the screen, is
+      refused with a message. Drag a tile to another slot. Done: the tiles
+      keep the size they had while editing. Reload: the layout is still
+      there. Turn the phone on its side: icons shrink, then the page
+      scrolls.
    During development this was also tested against a local stand-in for
    the Firebase REST API, with phone and laptop browser sessions and
    downloads compared byte for byte.
@@ -353,6 +381,15 @@
    - One passphrase per device (no keyring for older passphrases).
    - Files over 7 MB would need chunking (see LIMITS).
    - Tiles open web addresses only (no intent:, tel: or geo:).
+   - Sort A–Z is a one-off: pages added later go to the end.
+   - Fitting icons to their slots needs container query units (Chrome 105,
+     Firefox 110, Safari 16; all 2022-23). An older browser draws icons at
+     the size asked for, and narrow slots can overlap there.
+   - A layout can still be too tall for the screen it is shown on (a phone
+     on its side, a smaller window, a backup from a bigger screen): icons
+     shrink to 60% of the size asked for (28px at least), then the page
+     scrolls. In Edit mode a finger on a tile drags it, so scroll from an
+     empty slot, the header or the bar under the grid.
    - The "Reload" offer after an update is a five-second snackbar; if it is
      missed, the open after that shows the new copy anyway.
 
@@ -367,6 +404,12 @@
                deleted notes; snackbar as a popover. Dot for new notes.
                Service worker (sw.js). Grid fills from the bottom; buttons
                moved under it.
+   2026-11-12  Edit mode: Sort A–Z, icon size, columns and rows. Icons fit
+               themselves to their slots; empty slots line up with tiles.
+               The remove badge answers only a press that is really on it
+               (Chrome was giving it touches from most of the icon) and
+               shrinks with small icons. Labels go down to 10px in narrow
+               slots. In Edit mode an empty slot scrolls the page.
 ==============================================================================
 -->
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
@@ -384,13 +427,17 @@ r.dataset.shape=(s&&s.shape)||'squircle';r.dataset.fill=(s&&s.fill==='top')?'top
    Light values here; dark values in the two blocks below (the system's dark mode unless Light was
    chosen in Settings, and Dark chosen in Settings). Keep the two dark blocks identical.
    --sock icon background · --line borders · --btn field background · --bub note bubbles
-   --icon icon size, scales with the screen width */
+   --cols, --rows, --scale the layout chosen in Edit mode (applyPrefs() sets them on the root element)
+   --base icon size at 100%, scales with the screen width · --want the size asked for (--base x --scale)
+   --floor the least an icon shrinks to so that the rows fit the screen (60% of --want, 28px at least)
+   --icon the size icons are drawn at: --want here, fitted to its slot inside the grid (see "grid") */
 :root{
   color-scheme:light dark;
   --bg:#F0F1F4; --fg:#15161A; --fg2:#6A6E78; --sheet:#FFFFFF;
   --sock:rgba(0,0,0,.06); --line:rgba(0,0,0,.11); --btn:rgba(0,0,0,.05);
   --danger:#C8423E; --shadow:0 14px 36px rgba(0,0,0,.22); --bub:rgba(0,0,0,.065);
-  --icon:clamp(54px,15vw,66px);
+  --cols:4; --rows:5; --scale:1;
+  --base:clamp(54px,15vw,66px); --want:calc(var(--base) * var(--scale)); --floor:max(28px, var(--want) * .6); --icon:var(--want);
   --font:system-ui,-apple-system,Roboto,"Segoe UI",sans-serif;
 }
 @media (prefers-color-scheme:dark){
@@ -409,9 +456,9 @@ r.dataset.shape=(s&&s.shape)||'squircle';r.dataset.fill=(s&&s.fill==='top')?'top
 [hidden]{display:none!important}   /* the hidden attribute must beat the display:flex/grid rules below */
 html{background:var(--bg)}
 body{
-  margin:0; min-height:100dvh; display:flex; flex-direction:column;
+  margin:0; height:100dvh; display:flex; flex-direction:column;   /* a fixed height, not a minimum: see "grid". A grid too tall for it overflows, and the page scrolls */
   background:var(--bg); color:var(--fg); font-family:var(--font); font-size:14px;
-  padding:calc(env(safe-area-inset-top) + 10px) calc(14px + env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 6px) calc(14px + env(safe-area-inset-left));
+  padding:calc(env(safe-area-inset-top) + 10px) calc(14px + env(safe-area-inset-right)) 0 calc(14px + env(safe-area-inset-left));   /* the bottom padding is on .actions, so it follows a grid that overflows */
   -webkit-tap-highlight-color:transparent; -webkit-text-size-adjust:100%;
 }
 button{font-family:var(--font); cursor:pointer; touch-action:manipulation}
@@ -420,10 +467,11 @@ button{font-family:var(--font); cursor:pointer; touch-action:manipulation}
 /* ---------- header ----------
    The clock and date. The buttons (Notes, Settings, Edit) sit in .actions under the grid, in thumb reach;
    #hint moves under the grid too when it fills from the bottom (order: header 0, hint 1, grid 2, actions 4). */
-header{display:flex; align-items:flex-start; justify-content:space-between; padding:8px 6px 10px}
+header{display:grid; padding:8px 6px 10px}
+header > *{grid-area:1/1; min-width:0}   /* the clock and the Edit-mode tools share one cell, so the header is as tall in both modes */
 .time{display:block; font-size:34px; font-weight:300; line-height:1; letter-spacing:-.02em; font-variant-numeric:tabular-nums}
 .date{display:block; margin-top:7px; font-size:11px; font-weight:500; letter-spacing:.14em; text-transform:uppercase; color:var(--fg2)}
-.actions{display:flex; gap:8px; align-items:center; justify-content:flex-end; padding:12px 6px 0; order:4}
+.actions{display:flex; gap:8px; align-items:center; justify-content:flex-end; padding:12px 6px calc(env(safe-area-inset-bottom) + 6px); order:4}
 .pill,.ib{position:relative; height:36px; border:1px solid var(--line); background:transparent; color:var(--fg); border-radius:18px}
 .ib.dot::after{content:""; position:absolute; top:5px; right:5px; width:8px; height:8px; border-radius:50%; background:var(--danger)}   /* a note arrived since Notes was last open */
 .pill{padding:0 15px; font-size:13px; font-weight:500; min-width:66px}
@@ -431,20 +479,53 @@ header{display:flex; align-items:flex-start; justify-content:space-between; padd
 .editing .pill{background:var(--fg); color:var(--bg); border-color:var(--fg)}
 .hint{margin:0 6px 14px; color:var(--fg2); font-size:14px; line-height:1.45; max-width:34ch; order:1}
 [data-fill="bottom"] .hint{order:3; margin:14px 6px 0}
+/* edit-mode tools: three steppers in place of the clock, and "Sort A–Z" at the left of the bar under the grid.
+   They use the room the clock had, so the grid is the same size while editing and the tiles look there as
+   they will after Done. A stepper button that is dimmed but not disabled (aria-disabled) still answers a tap,
+   by saying why it can't go further. */
+.editing .clock{visibility:hidden}
+.tools{visibility:hidden; display:grid; grid-template-columns:1.3fr 1fr 1fr; gap:8px; align-self:end; max-width:440px}
+.editing .tools{visibility:visible}
+.stp{min-width:0}
+.stp > span{display:block; margin:0 0 5px 4px; font-size:11px; line-height:13px; font-weight:500; letter-spacing:.12em; text-transform:uppercase; color:var(--fg2); white-space:nowrap}
+.stp > div{display:flex; align-items:center; height:36px; border:1px solid var(--line); border-radius:18px}
+.stp button{flex:none; width:34px; height:34px; border:0; border-radius:50%; padding:0; display:grid; place-items:center; background:transparent; color:var(--fg)}
+.stp button:disabled,.stp button[aria-disabled="true"]{opacity:.3}
+.stp button:disabled{cursor:default}
+.stp output{flex:1; min-width:0; text-align:center; font-size:13px; font-weight:500; font-variant-numeric:tabular-nums}
+.probe{position:absolute; visibility:hidden; pointer-events:none; width:var(--base); height:0}   /* as wide as an icon at 100%; the script measures it */
+.actions .chip{margin-right:auto}   /* Sort A–Z keeps to the left, away from Done */
 
 /* ---------- grid ----------
-   4 columns x 5 rows = COLS x ROWS (20) in the script; change both together. Each cell is a tile (a link,
-   or a button in Edit mode), the "Add page" button, or an empty cell shown only while editing. With the
-   default layout render() gives every cell a grid-row so slot 0 is bottom-left and the empties float up. */
+   --cols x --rows cells (state.cols x state.rows in the script). Each cell is a tile (a link, or a button in
+   Edit mode), the "Add page" button, or an empty cell shown only while editing. With the default layout
+   render() gives every cell a grid-row so slot 0 is bottom-left and the empties float up.
+   The grid fills the screen under the header and its size never depends on its tiles (container-type:size),
+   so every cell can work out its own slot (--cw wide, --ch high, in container query units) and draw its icon
+   at the size asked for or smaller: never wider than the slot minus 10px, never higher than the slot minus
+   the 49px a tile needs around its icon (8px above; 7px, two label lines and 4px below). For the height an
+   icon shrinks to --floor at most; past that the grid's min-height (rows of --floor + 49px, and the 2px gaps)
+   wins and the page scrolls. The script reads that min-height to refuse a row that would not fit (rowFits).
+   Chrome lets cells measure the grid's height only when that height is definite, which is why the body has a
+   fixed height (a flex item of a body with just a min-height would report 0).
+   Without container queries (browsers before 2023) icons keep the size asked for and rows make room for it. */
 .grid{
-  flex:1; display:grid; grid-template-columns:repeat(4,1fr); grid-template-rows:repeat(5,minmax(98px,1fr));
+  flex:1; display:grid; grid-template-columns:repeat(var(--cols),minmax(0,1fr)); grid-template-rows:repeat(var(--rows),minmax(0,1fr));
   gap:2px; align-items:center; order:2;
+  min-height:calc(var(--rows) * (var(--want) + 51px) - 2px);
 }
-.editing .grid{touch-action:none; user-select:none; -webkit-user-select:none}
+.editing .grid{user-select:none; -webkit-user-select:none}
 .cell{
   position:relative; display:flex; flex-direction:column; align-items:center; justify-content:flex-start;
   min-width:0; padding:8px 2px 4px; border-radius:18px; border:0; background:none;
   color:inherit; text-decoration:none; text-align:center; -webkit-user-drag:none;
+}
+@supports (container-type:size){
+  .grid{container-type:size; min-height:calc(var(--rows) * (var(--floor) + 51px) - 2px)}
+  .cell{
+    --cw:calc((100cqw - (var(--cols) - 1) * 2px) / var(--cols)); --ch:calc((100cqh - (var(--rows) - 1) * 2px) / var(--rows));
+    --icon:min(var(--want), var(--cw) - 10px, max(var(--ch) - 49px, var(--floor)));
+  }
 }
 .cell:focus-visible{outline-offset:-2px}
 .ic{
@@ -456,7 +537,7 @@ header{display:flex; align-items:flex-start; justify-content:space-between; padd
 .ic.remote img{width:62%; height:62%; object-fit:contain}
 .ic.mono{background:hsl(var(--h) 55% 87%); color:hsl(var(--h) 45% 30%); font-weight:600; font-size:calc(var(--icon)*.44); letter-spacing:-.02em; line-height:1}
 .lb{
-  margin-top:7px; font-size:12px; font-weight:500; line-height:1.25; letter-spacing:-.005em;
+  margin-top:7px; font-size:clamp(10px,calc(var(--cw,100px) * .17),12px); font-weight:500; line-height:1.25; letter-spacing:-.005em;   /* 12px; down to 10px in slots narrower than 70px */
   display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
   max-width:100%; min-height:2.5em; overflow-wrap:anywhere; color:var(--fg); opacity:.92;
 }
@@ -467,7 +548,7 @@ header{display:flex; align-items:flex-start; justify-content:space-between; padd
 .editing .empty{visibility:visible}
 .empty .ic{opacity:.55}
 .tile.ph .ic,.tile.ph .lb{opacity:.22}
-.editing .tile{cursor:grab}
+.editing .tile{cursor:grab; touch-action:none}   /* a finger on a tile drags it; anywhere else it scrolls the page */
 
 /* icon shapes (Android adaptive-icon masks) */
 [data-shape="squircle"] .ic{clip-path:url(#sq)}
@@ -475,12 +556,15 @@ header{display:flex; align-items:flex-start; justify-content:space-between; padd
 [data-shape="round"] .ic{border-radius:24%}
 [data-shape="drop"] .ic{clip-path:url(#td)}
 
-/* remove badge (edit mode) */
+/* remove badge (edit mode): 22px across (--b), less on small icons so it doesn't cover them; the button around
+   it is 10px larger, to be easy to hit. The script counts a press as the badge's only inside that button. */
 .rm{
-  position:absolute; top:0; left:calc(50% - var(--icon)/2 - 9px); width:32px; height:32px;
+  --b:clamp(16px,calc(var(--icon) * .38),22px);
+  position:absolute; top:0; left:calc(50% - var(--icon)/2 - 9px); width:calc(var(--b) + 10px); height:calc(var(--b) + 10px);
   border:0; background:transparent; padding:0; display:grid; place-items:center; z-index:2; color:var(--bg);
 }
-.rm span{width:22px; height:22px; border-radius:50%; background:var(--fg); border:2px solid var(--bg); display:grid; place-items:center}
+.rm span{width:var(--b); height:var(--b); border-radius:50%; background:var(--fg); border:2px solid var(--bg); display:grid; place-items:center}
+.rm svg{width:calc(var(--b) * .55); height:calc(var(--b) * .55)}
 
 /* drag ghost */
 .ghost{
@@ -647,12 +731,37 @@ dialog.narrow{max-width:520px; margin:0 auto}
   </defs>
 </svg>
 
-<!-- header: clock and date (filled in by tick()) -->
+<!-- header: clock and date (filled in by tick()). In Edit mode the layout steppers show in their place
+     (see "layout tools" in the script). #probe is as wide as an icon at 100%, for the script to measure. -->
 <header>
-  <div>
+  <div class="clock">
     <time class="time" id="time" aria-live="off">--:--</time>
     <span class="date" id="date"></span>
   </div>
+  <div class="tools" id="tools" role="group" aria-label="Grid layout">
+    <div class="stp"><span id="sizeLb">Icon size</span>
+      <div role="group" aria-labelledby="sizeLb">
+        <button type="button" id="sizeDn" aria-label="Smaller icons"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+        <output id="sizeVal">100%</output>
+        <button type="button" id="sizeUp" aria-label="Larger icons"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+      </div>
+    </div>
+    <div class="stp"><span id="colsLb">Columns</span>
+      <div role="group" aria-labelledby="colsLb">
+        <button type="button" id="colsDn" aria-label="Fewer columns"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+        <output id="colsVal">4</output>
+        <button type="button" id="colsUp" aria-label="More columns"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+      </div>
+    </div>
+    <div class="stp"><span id="rowsLb">Rows</span>
+      <div role="group" aria-labelledby="rowsLb">
+        <button type="button" id="rowsDn" aria-label="Fewer rows"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+        <output id="rowsVal">5</output>
+        <button type="button" id="rowsUp" aria-label="More rows"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+      </div>
+    </div>
+  </div>
+  <span class="probe" id="probe" aria-hidden="true"></span>
 </header>
 
 <p class="hint" id="hint" hidden>Tap + to add a page you open often. Each one gets a name and an icon, saved on this phone.</p>
@@ -660,8 +769,10 @@ dialog.narrow{max-width:520px; margin:0 auto}
 <!-- the grid: built by render() from the saved links -->
 <main class="grid" id="grid" aria-label="Your pages"></main>
 
-<!-- the bar under the grid: Notes (with a dot when a note arrived since Notes was last open), Settings, Edit -->
+<!-- the bar under the grid: Notes (with a dot when a note arrived since Notes was last open), Settings, Edit;
+     in Edit mode also Sort A–Z, at the left -->
 <nav class="actions" aria-label="Page actions">
+    <button class="chip" id="sortBtn" type="button" hidden>Sort A–Z</button>
     <button class="ib" id="notesBtn" type="button" aria-label="Notes">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"/></svg>
     </button>
@@ -849,8 +960,11 @@ dialog.narrow{max-width:520px; margin:0 auto}
    device needs the shared key (Settings > Notes); the address alone gives access to nothing. */
 const NOTES_DB = 'https://tv-db-68534-default-rtdb.europe-west1.firebasedatabase.app/';
 
-const COLS = 4, ROWS = 5, SLOTS = COLS * ROWS, KEY = 'drawer.v1', IK = 'drawer.icon.';
+const KEY = 'drawer.v1', IK = 'drawer.icon.';
 const SHAPES = ['squircle', 'circle', 'round', 'drop'], THEMES = ['system', 'dark', 'light'], FILLS = ['bottom', 'top'];
+const MINC = 2, MAXC = 8, MINR = 1, MAXR = 10, MINS = 60, MAXS = 160;   /* limits of the layout: columns, rows, icon size in % */
+const int = (v, lo, hi, d) => Number.isInteger(v) && v >= lo && v <= hi ? v : d;   /* v if it is a whole number in range, else d */
+const slots = () => state.cols * state.rows;
 const $ = s => document.querySelector(s);
 const grid = $('#grid'), hint = $('#hint'), body = document.body;
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -858,7 +972,8 @@ const PLUS = '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke
 const MINUS = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>';
 
 /* ---------- state ----------
-   state is drawer.v1: {links: [{id, name, url, noicon?, remote?, tried?}], shape, theme, fill}.
+   state is drawer.v1: {links: [{id, name, url, noicon?, remote?, tried?}], shape, theme, fill, cols, rows, size}.
+   cols x rows is the grid (slots() cells) and size the icon size in % of --base; all three are set in Edit mode.
    Icons are stored apart (drawer.icon.<id>) because they're big; getIcon/setIcon handle them.
    Every change goes through save(); the grid then redraws with render(). */
 function load(){
@@ -866,6 +981,13 @@ function load(){
   try{ s = JSON.parse(localStorage.getItem(KEY)); }catch(e){}
   s = s && Array.isArray(s.links) ? Object.assign({shape:'squircle', theme:'system', fill:'bottom'}, s) : {links:[], shape:'squircle', theme:'system', fill:'bottom'};
   if (!SHAPES.includes(s.shape)) s.shape = 'squircle'; if (!THEMES.includes(s.theme)) s.theme = 'system'; if (!FILLS.includes(s.fill)) s.fill = 'bottom';
+  s.cols = int(s.cols, MINC, MAXC, 4); s.rows = int(s.rows, MINR, MAXR, 5); s.size = int(s.size, MINS, MAXS, 100);
+  return roomFor(s);
+}
+/* a saved page is never left without a slot: add rows, then columns, until the grid holds them all */
+function roomFor(s){
+  while (s.cols * s.rows < s.links.length && s.rows < MAXR) s.rows++;
+  while (s.cols * s.rows < s.links.length && s.cols < MAXC) s.cols++;
   return s;
 }
 let state = load();
@@ -895,7 +1017,7 @@ function normalizeUrl(v){
 }
 
 /* ---------- render ----------
-   render() rebuilds all SLOTS cells from state.links: tiles (links normally, buttons in Edit mode),
+   render() rebuilds all slots() cells from state.links: tiles (links normally, buttons in Edit mode),
    one "Add page" button after the last tile, then empty cells. Icons: a saved one, else a remote
    URL, else the first letter on a colour taken from the address (monoHTML). With fill = bottom each
    cell gets its grid-row, so slot 0 is bottom-left; the DOM order (and so the drag code's slot numbers)
@@ -919,9 +1041,9 @@ grid.addEventListener('error', e => {
   if (l && ic) ic.outerHTML = monoHTML(l.name, l.url);
 }, true);
 function render(){
-  const L = state.links; let html = '';
-  const row = i => state.fill === 'bottom' ? ` style="grid-row:${ROWS - Math.floor(i / COLS)}"` : '';
-  for (let i = 0; i < SLOTS; i++){
+  const L = state.links, n = slots(); let html = '';
+  const row = i => state.fill === 'bottom' ? ` style="grid-row:${state.rows - Math.floor(i / state.cols)}"` : '';
+  for (let i = 0; i < n; i++){
     const l = L[i];
     if (l){
       const ic = iconHTML(l), lb = `<span class="lb">${esc(l.name)}</span>`;
@@ -931,27 +1053,38 @@ function render(){
     } else if (i === L.length){
       html += `<button class="cell add" type="button"${row(i)} aria-label="Add a page"><span class="ic">${PLUS}</span><span class="lb">Add page</span></button>`;
     } else {
-      html += `<div class="cell empty"${row(i)} aria-hidden="true"><span class="ic"></span></div>`;
+      html += `<div class="cell empty"${row(i)} aria-hidden="true"><span class="ic"></span><span class="lb"></span></div>`;   /* the blank label lines its icon up with the tiles */
     }
   }
   grid.innerHTML = html;
   hint.hidden = L.length > 0;
+  if (editing) syncTools();   /* the steppers' limits follow the number of pages */
 }
 
 /* ---------- edit mode ---------- */
 let editing = false;
 const editBtn = $('#edit');
 function setEditing(v){
-  editing = v; body.classList.toggle('editing', v);
+  editing = v; body.classList.toggle('editing', v); sortBtn.hidden = !v;
   editBtn.textContent = v ? 'Done' : 'Edit'; editBtn.setAttribute('aria-pressed', String(v));
   render();
 }
 editBtn.addEventListener('click', () => setEditing(!editing));
 
-let suppressClick = false;
+/* Chrome hands a touch that lands near a button to that button (touch adjustment), which gave the remove badge
+   most of the icon under it. So a press or tap counts as the badge's only when the finger or mouse really went
+   down inside it (pressAt); a click made with the keyboard (detail 0) has no place to check. */
+let suppressClick = false, pressAt = null;
+grid.addEventListener('pointerdown', e => { pressAt = [e.clientX, e.clientY]; }, true);
+function badgeOf(e){
+  const rm = e.target.closest('.rm');
+  if (!rm || !pressAt || (e.type === 'click' && e.detail === 0)) return rm;
+  const r = rm.getBoundingClientRect(), [x, y] = pressAt;
+  return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom ? rm : null;
+}
 grid.addEventListener('click', e => {
   if (suppressClick){ e.preventDefault(); return; }
-  const rm = e.target.closest('.rm'); if (rm){ e.preventDefault(); remove(+rm.dataset.i); return; }
+  const rm = badgeOf(e); if (rm){ e.preventDefault(); remove(+rm.dataset.i); return; }
   if (e.target.closest('.add')){ openSheet(-1); return; }
   const t = e.target.closest('.tile'); if (t && editing) openSheet(+t.dataset.i);
 });
@@ -964,7 +1097,7 @@ grid.addEventListener('contextmenu', e => { if (editing) e.preventDefault(); });
 let drag = null, ghost = null, rects = null;
 grid.addEventListener('pointerdown', e => {
   if (!editing || e.button !== 0) return;
-  const t = e.target.closest('.tile'); if (!t || e.target.closest('.rm')) return;
+  const t = e.target.closest('.tile'); if (!t || badgeOf(e)) return;
   drag = {i: +t.dataset.i, x: e.clientX, y: e.clientY, id: e.pointerId, on: false};
 });
 grid.addEventListener('pointermove', e => {
@@ -996,6 +1129,7 @@ function startDrag(){
   rects = [...grid.children].map(c => c.getBoundingClientRect());
   const ic = grid.children[drag.i].querySelector('.ic');
   ghost = document.createElement('div'); ghost.className = 'ghost'; ghost.innerHTML = ic.outerHTML;
+  ghost.style.setProperty('--icon', getComputedStyle(ic).width);   /* outside the grid nothing fits an icon to its slot */
   body.appendChild(ghost); markPh();
 }
 function markPh(){ const t = grid.children[drag.i]; if (t) t.classList.add('ph'); }
@@ -1003,6 +1137,67 @@ function slotAt(x, y){
   for (let k = 0; k < rects.length; k++){ const r = rects[k]; if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return k; }
   return -1;
 }
+
+/* ---------- layout tools (edit mode) ----------
+   In Edit mode the clock makes way for three steppers, and "Sort A–Z" joins the bar under the grid.
+   Columns and rows are state.cols and state.rows; a layout too small for the saved pages is refused, and so
+   is a row that would make the page scroll (rowFits), so a layout made here always fits this screen.
+   Icon size is state.size, in % of --base. applyPrefs() hands all three to the CSS (--cols, --rows, --scale).
+   The CSS draws an icon smaller when its slot can't hold the size asked for, so the stepper shows the size
+   measured on screen (sizeNow), "+" stops there, and "−" steps down from what is shown, not from the stored
+   value. A hard limit disables a button; a limit that has a reason (pages that wouldn't fit, no room for a
+   row, icons that already fill their slots) only dims it (aria-disabled), and a tap says why. */
+const sortBtn = $('#sortBtn'), probe = $('#probe'), sizeDn = $('#sizeDn'), sizeUp = $('#sizeUp'), sizeVal = $('#sizeVal'),
+      colsDn = $('#colsDn'), colsUp = $('#colsUp'), colsVal = $('#colsVal'), rowsDn = $('#rowsDn'), rowsUp = $('#rowsUp'), rowsVal = $('#rowsVal');
+const widthOf = el => parseFloat(getComputedStyle(el).width) || 0;
+/* pct: the size of the icons on screen, in % of --base; held: the layout keeps them below state.size */
+function sizeNow(){
+  const ic = grid.querySelector('.ic'), pct = ic ? widthOf(ic) / (widthOf(probe) || 1) * 100 : state.size;
+  return {pct, held: pct < state.size - .5};
+}
+function sizeBelow(){ const s = sizeNow(); return s.held ? Math.floor((s.pct - 2) / 10) * 10 : state.size - 10; }   /* the next size down that shows */
+/* would one more row fit this screen? The grid's min-height is what its rows need with icons at their smallest;
+   while the page doesn't scroll, the grid's own height is the room there is */
+function rowFits(){
+  const de = document.documentElement, r = state.rows;
+  if (de.scrollHeight > de.clientHeight + 1) return false;
+  return ((parseFloat(getComputedStyle(grid).minHeight) || 0) + 2) / r * (r + 1) - 2 <= grid.offsetHeight + .5;
+}
+const dim = (b, hard, soft) => { b.disabled = hard; b.setAttribute('aria-disabled', String(!hard && soft)); };
+function syncTools(){
+  const n = state.links.length, c = state.cols, r = state.rows, s = sizeNow();
+  colsVal.textContent = c; rowsVal.textContent = r; sizeVal.textContent = Math.round(s.pct) + '%';
+  dim(colsDn, c <= MINC, (c - 1) * r < n); dim(colsUp, c >= MAXC, false);
+  dim(rowsDn, r <= MINR, c * (r - 1) < n); dim(rowsUp, r >= MAXR, !rowFits());
+  dim(sizeDn, sizeBelow() < MINS, false); dim(sizeUp, state.size >= MAXS, s.held);
+  sortBtn.disabled = n < 2;
+}
+function setGrid(c, r){
+  const n = state.links.length;
+  if (c * r < n){ toast(`${c} × ${r} is too small for your ${n} pages.`); return; }
+  state.cols = c; state.rows = r; save(); applyPrefs(); render();
+}
+function setSize(v){ state.size = Math.min(MAXS, Math.max(MINS, v)); save(); applyPrefs(); syncTools(); }
+colsDn.addEventListener('click', () => setGrid(state.cols - 1, state.rows));
+colsUp.addEventListener('click', () => setGrid(state.cols + 1, state.rows));
+rowsDn.addEventListener('click', () => setGrid(state.cols, state.rows - 1));
+rowsUp.addEventListener('click', () => { if (rowFits()) setGrid(state.cols, state.rows + 1); else toast('No room for another row on this screen.'); });
+sizeDn.addEventListener('click', () => setSize(sizeBelow()));
+sizeUp.addEventListener('click', () => { if (sizeNow().held) toast('Icons already fill their slots.'); else setSize(state.size + 10); });
+new ResizeObserver(() => { if (editing) syncTools(); }).observe(grid);   /* a resized or rotated screen changes what fits */
+/* Sort A–Z: by name, in the browser's language, digits by their value ("Page 2" before "Page 10"). A one-off:
+   the order is saved like one made by dragging. Undo puts the old order back by id, so a page added or removed
+   in the meantime is left alone. */
+const byName = new Intl.Collator([], {sensitivity: 'base', numeric: true});
+sortBtn.addEventListener('click', () => {
+  const was = state.links, now = [...was].sort((a, b) => byName.compare(a.name, b.name));
+  if (now.every((l, i) => l === was[i])){ toast('Already in A–Z order.'); return; }
+  state.links = now; save(); render();
+  snack('Sorted A–Z', 'Undo', () => {
+    const at = new Map(was.map((l, i) => [l.id, i])), pos = l => at.has(l.id) ? at.get(l.id) : Infinity;
+    state.links = [...state.links].sort((a, b) => pos(a) - pos(b)); save(); render();
+  });
+});
 
 /* ---------- remove + undo ---------- */
 let undo = null;
@@ -1194,7 +1389,7 @@ form.addEventListener('submit', e => {
   const host = hostOf(url), name = (nameIn.value.trim() || nameFrom(host) || host).slice(0, 40);
   let l;
   if (cur < 0){
-    if (state.links.length >= SLOTS){ sheet.close(); toast(`All ${SLOTS} slots are full. Remove a page first.`); return; }
+    if (state.links.length >= slots()){ sheet.close(); toast('The grid is full. Add a row in Edit.'); return; }
     l = {id: uid(), name, url, noicon: pend.noicon};
     if (!pend.noicon){ if (pend.icon) setIcon(l.id, pend.icon); else if (pend.remote) l.remote = pend.remote; }
     state.links.push(l);
@@ -1211,13 +1406,16 @@ form.addEventListener('submit', e => {
 });
 
 /* ---------- settings ----------
-   applyPrefs() applies the theme, icon shape and layout and colours the browser bar (theme-color, a
-   literal copy of --bg). The pre-paint script in <head> repeats the first part so the page never flashes. */
+   applyPrefs() applies the theme, icon shape and layout (fill, columns, rows, icon size) and colours the
+   browser bar (theme-color, a literal copy of --bg). The pre-paint script in <head> repeats the theme, shape
+   and fill so the page never flashes; columns, rows and size need no repeat, because the grid has no tiles
+   before render() runs. */
 const settings = $('#settings');
 function applyPrefs(){
   const r = document.documentElement;
   if (state.theme === 'system') r.removeAttribute('data-theme'); else r.dataset.theme = state.theme;
   r.dataset.shape = state.shape; r.dataset.fill = state.fill;
+  r.style.setProperty('--cols', state.cols); r.style.setProperty('--rows', state.rows); r.style.setProperty('--scale', state.size / 100);
   const dark = state.theme === 'dark' || (state.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
   $('#themeColor').content = dark ? '#000000' : '#F0F1F4';
   for (const b of $('#shapes').children) b.setAttribute('aria-pressed', String(b.dataset.shape === state.shape));
@@ -1231,7 +1429,7 @@ $('#fills').addEventListener('click', e => { const b = e.target.closest('button'
 $('#gear').addEventListener('click', () => {
   $('#addr').value = location.href;
   $('#keyIn').value = nKeyPath; $('#keyErr').textContent = ''; kArmed = false; clearTimeout(kArmT); $('#keyNew').textContent = 'Create a new key';
-  $('#slots').textContent = `${state.links.length} of ${SLOTS} slots used.`;
+  $('#slots').textContent = `${state.links.length} of ${slots()} slots used.` + (state.links.length >= slots() ? ' Add columns or rows in Edit to make room.' : '');
   resetArmed = false; $('#resetBtn').textContent = 'Remove all pages';
   settings.showModal();
 });
@@ -1255,6 +1453,7 @@ $('#refreshBtn').addEventListener('click', async e => {
 });
 $('#exportBtn').addEventListener('click', () => {
   const data = {v: 1, app: 'drawer', exported: new Date().toISOString(), shape: state.shape, theme: state.theme, fill: state.fill,
+    cols: state.cols, rows: state.rows, size: state.size,
     links: state.links.map(l => Object.assign({}, l, {icon: getIcon(l.id) || undefined}))};
   const blob = new Blob([JSON.stringify(data)], {type: 'application/json'}), u = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = u; a.download = 'home-backup.json'; body.appendChild(a); a.click(); a.remove();
@@ -1266,7 +1465,7 @@ $('#importFile').addEventListener('change', async e => {
   try{
     const d = JSON.parse(await f.text()); if (!d || !Array.isArray(d.links)) throw 0;
     for (const l of state.links) setIcon(l.id, null);
-    state.links = d.links.slice(0, SLOTS).map(l => {
+    state.links = d.links.slice(0, MAXC * MAXR).map(l => {
       const id = String(l.id || uid()), url = normalizeUrl(String(l.url || ''));
       if (url && l.icon) setIcon(id, l.icon);
       const o = {id, url, name: String(l.name || nameFrom(hostOf(url || ''))).slice(0, 40)};
@@ -1274,6 +1473,8 @@ $('#importFile').addEventListener('change', async e => {
       return o;
     }).filter(l => l.url);
     if (SHAPES.includes(d.shape)) state.shape = d.shape; if (THEMES.includes(d.theme)) state.theme = d.theme; if (FILLS.includes(d.fill)) state.fill = d.fill;
+    state.cols = int(d.cols, MINC, MAXC, state.cols); state.rows = int(d.rows, MINR, MAXR, state.rows); state.size = int(d.size, MINS, MAXS, state.size);
+    roomFor(state);   /* a backup from an earlier version has no layout: this device keeps its own, grown if the pages need it */
     save(); applyPrefs(); render(); settings.close(); toast(`Imported ${state.links.length} page${state.links.length === 1 ? '' : 's'}.`);
   }catch(err){ toast('That file isn’t a backup from this page.'); }
 });
