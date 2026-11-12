@@ -1,0 +1,2034 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+==============================================================================
+ HOME: a one-file home page (app launcher) with shared notes and files
+==============================================================================
+
+ OVERVIEW
+   One HTML file plus sw.js (a service worker): no build step, no libraries,
+   no web fonts. Hosted on GitHub Pages and set as Chrome's home page on
+   Android (the Settings sheet's "Homepage address" shows how). To change
+   it, edit this file and commit; GitHub Pages republishes within a minute
+   or two. The service worker still shows the saved copy on the next open
+   while it fetches the new one, then offers "Reload": tap it, or open the
+   page once more, to see the new copy.
+
+   - Header: clock and date, updated every minute.
+   - Grid: up to 20 shortcuts (4 columns x 5 rows), filled from the bottom
+     row so the first tiles sit under the thumb (Settings > Layout switches
+     to the top). Edit mode: tap a tile to edit it, its minus badge to
+     remove it (with Undo), drag to reorder.
+   - Bar under the grid: Notes (with a dot when a note arrived since Notes
+     was last open on this device), Settings, Edit.
+   - Add/Edit sheet: web address, name (suggested from the address), icon
+     (found online, chosen from an image, or the first letter on a colour).
+   - Settings sheet: icon shape, layout, theme (system, dark, light), this
+     page's address, the shared key for notes, refresh icons, export/import
+     a backup, remove all pages.
+   - Notes sheet (speech-bubble button): a chat-like list shared by every
+     device that has the same key. Text notes and files up to 7 MB, each
+     sent as it is or encrypted with a passphrase (the lock button). Tap a
+     note to copy it, hold it to edit it, the clipboard button sends what
+     was copied. Tap a file to download it; while Notes stays open, tap it
+     again to share it where the browser has a share sheet (Android, iOS,
+     Chrome on Windows; elsewhere it downloads again). "Select" picks items
+     to delete, with Undo for five seconds. Needs a Firebase Realtime
+     Database: see FIREBASE below.
+   - Passphrase sheet (key button in Notes, shown once a passphrase is set
+     or an encrypted note exists): check, change or forget the passphrase
+     for encrypted notes on this device. The first one is asked for when
+     the lock is switched on.
+
+ MAP OF THIS FILE (search for the markers in quotes)
+   HEAD     pre-paint script: applies the saved theme, icon shape and layout
+            before the first paint, so the page's colours never flash (the
+            browser bar colour follows once the main script runs).
+   STYLE    "design tokens" > "header" > "grid" > "sheets" > "notes sheet"
+            ("files", "selecting notes to delete", "composer", "passphrase
+            sheet") > "snackbar"
+   BODY     SVG clip paths > header > #hint > #grid > .actions > dialogs
+            #sheet (add/edit), #settings, #notes, #passSheet > #snack
+   SCRIPT   NOTES_DB > "state" > "render" > "edit mode" (drag to reorder)
+            > "remove + undo" > "snackbar" > "icons" > "add / edit sheet"
+            > "settings" > "notes" ("shared key", "stream", "encryption",
+            "key storage", "the list", "sending", "downloading", "selecting
+            and deleting", "passphrase sheet", "composer, copying and
+            editing", "new-note dot") > "clock" > "boot" (service worker)
+
+ DATA KEPT ON EACH DEVICE
+   Browser storage belongs to the whole site, which on GitHub Pages is
+   <username>.github.io: every Pages project of the same account shares it,
+   and any script on one of them can read it, so every key here starts
+   with "drawer.".
+   localStorage
+   drawer.v1             {links: [...], shape, theme, fill}: grid and
+                         settings. A link is {id, name, url, noicon?,
+                         remote?, tried?}: noicon = show the letter; remote
+                         = icon URL shown straight from the web; tried =
+                         time of the last failed icon search (retried at
+                         most once a day).
+   drawer.icon.<id>      a link's icon: a 128 px WebP (or PNG) data URL
+                         made here, or whatever string a backup carried
+                         (see KNOWN LIMITS).
+   drawer.notes.key      the shared key: the secret path in the database
+                         under which the notes live (FIREBASE).
+   drawer.notes          the last copy of the notes list seen here (the list
+                         only, encrypted notes still encrypted; file
+                         contents never go into browser storage).
+   drawer.notes.last     the newest note id seen while Notes was open; the
+                         dot on the Notes button shows when the database
+                         holds a newer one.
+   drawer.notes.encrypt  "1" or "0": the lock button starts as last left.
+   drawer.notes.remember "0" when "Keep the key on this device" was last
+                         unticked.
+   drawer.notes.pass     earlier versions kept the passphrase here in plain
+                         text; on load the key is derived from it and, once
+                         the key store below holds it, the text is removed.
+   IndexedDB "drawer.notes", store "keys": salt -> the AES key derived from
+   the passphrase, as a non-extractable CryptoKey, when "Keep the key on
+   this device" was ticked. The passphrase itself is kept nowhere. A script
+   on this site could still decrypt with the stored key and root access to
+   the device could read it, but it cannot be turned back into the
+   passphrase or used anywhere else.
+   Cache "drawer.home-v1": a copy of this page, kept by sw.js.
+   Renaming a key loses that data on every device: migrate it instead.
+   Backup file (Settings > Export): {v: 1, app: "drawer", exported, shape,
+   theme, fill, links: [link + its icon]}. Notes, the shared key and the
+   passphrase aren't in it.
+
+ FIREBASE (notes and files)
+   NOTES_DB, near the top of the script, holds the database address, e.g.
+   https://<project>-default-rtdb.europe-west1.firebasedatabase.app
+   (https://<project>.firebaseio.com for databases in us-central1).
+   Left empty, Notes says it isn't connected and the rest works as usual.
+   The notes live under /s/<key>, where <key> is the shared key: a random
+   string created in Settings > Notes on the first device and pasted into
+   the others. The rules below leave the root and /s unreadable, so keys
+   cannot be listed: without the key nothing under it can be read or
+   changed, with it everything can. The address alone (it is in this
+   page's source) reveals nothing, though anyone who has it can still
+   write under a made-up key and use up the storage quota; only Firebase
+   Authentication stops that. The key is part of every request's address,
+   so Firebase's logs see it. Keep it out of notes and out of the page
+   source.
+
+   Setup: console.firebase.google.com > create a project > Databases &
+   Storage > Realtime Database > Create database (locked mode) > Rules tab:
+   paste the rules below and Publish > copy the address shown on the Data
+   tab into NOTES_DB > open the page, Settings > Notes > Create a new key,
+   then Copy the key and enter it on the other devices.
+   Moving notes from an earlier version (data at /notes and /blobs): Data
+   tab > menu > Export JSON at the root, then select /s/<key> and Import
+   JSON (the file holds "notes" and "blobs" at its top level, which is the
+   shape the new path expects), then delete the old /notes and /blobs.
+   Encrypted files keep opening: the salt depends on the address, not on
+   the path.
+   Free Spark plan (October 2026): 1 GB stored, 10 GB downloaded a month,
+   100 connections at once. Cloud Storage for Firebase needs the paid Blaze
+   plan, which is why file contents live in the database as base64 text.
+
+   Data:
+     /s/<key>/notes/<id>   text note        {text, t}
+                           encrypted note   {enc: 1, s, ct, t}
+                           file as it is    {name, size, type?, t}
+                           encrypted file   {size, enc: 1, s, meta, t}
+     /s/<key>/blobs/<id>   the file's contents in base64 (encrypted bytes
+                           for an encrypted file)
+     t = server time in ms, written as {".sv": "timestamp"}.
+     <id> = uid(): time in base 36 + random, so ids sort in time order.
+     The list is sorted by t, then id.
+     Only /notes is streamed. /blobs/<id> is downloaded when a file is
+     tapped, so files never slow down the list.
+
+   Requests (Firebase REST API; no Firebase library is loaded). NROOT is
+   NOTES_DB/s/<key>:
+     EventSource NROOT/notes.json   live list while Notes is open and the
+                                    page is visible. "put" replaces the data
+                                    at a path, "patch" merges children
+                                    (nApply).
+     GET  NROOT/notes.json?shallow=true
+                                    after a failed connection: to explain it
+                                    and to decide whether to reconnect
+     GET  NROOT/notes.json?orderBy="$key"&limitToLast=1
+                                    at load, when the page comes back and
+                                    when the connection returns: the newest
+                                    note, for the dot
+     PUT  NROOT/notes/<id>.json     send a note
+     PATCH NROOT/notes/<id>.json    edit a note ({text} or {ct})
+     PATCH NROOT/.json {"notes/<id>": {...}, "blobs/<id>": "..."}
+                                    send a file. One write, so this page
+                                    never leaves a list entry without its
+                                    contents (the rules don't enforce that)
+     PATCH NROOT/.json {"notes/<id>": null, "blobs/<id>": null, ...}
+                                    delete, sent five seconds after Delete
+                                    unless Undo was tapped
+     GET  NROOT/blobs/<id>.json     download a file
+   Firebase answers every write with the data written, so a file comes
+   back down right after going up (see KNOWN LIMITS).
+
+   Security rules (Firebase console > Realtime Database > Rules). Keep them
+   in step with the code: a new field or a higher limit must change in both
+   places, or writes fail with "Permission denied" ("$other" rejects any
+   field not listed).
+   {
+     "rules": {
+       "s": {
+         "$key": {
+           "notes": {
+             ".read": "$key.length >= 16",
+             ".write": "$key.length >= 16",
+             "$id": {
+               ".validate": "newData.child('t').isNumber() && (newData.hasChild('text') || newData.hasChild('ct') || newData.hasChild('size'))",
+               "t":    { ".validate": "newData.isNumber() && newData.val() <= now" },
+               "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 5000" },
+               "ct":   { ".validate": "newData.isString() && newData.val().length <= 16500" },
+               "name": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 300" },
+               "type": { ".validate": "newData.isString() && newData.val().length <= 200" },
+               "size": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 7000000" },
+               "enc":  { ".validate": "newData.val() === 1" },
+               "s":    { ".validate": "newData.isString() && newData.val().length <= 64" },
+               "meta": { ".validate": "newData.isString() && newData.val().length <= 2000" },
+               "$other": { ".validate": false }
+             }
+           },
+           "blobs": {
+             "$id": {
+               ".read": "$key.length >= 16",
+               ".write": "$key.length >= 16",
+               ".validate": "newData.isString() && newData.val().length <= 9500000"
+             }
+           }
+         }
+       }
+     }
+   }
+   There's no login: anyone who has the key can read notes and unencrypted
+   files, download encrypted ones (unreadable without the passphrase,
+   though their sizes, dates and roughly the length of their names show),
+   add, edit, backdate and delete anything, and put a deleted note back.
+   The key keeps strangers out; it does not protect against someone it was
+   shared with. To lock it down further: Firebase Authentication (e.g.
+   Google sign-in), rules like ".read"/".write": "auth.uid === '<uid>'",
+   and ?auth=<ID token> on every request above (tokens expire after an
+   hour, so the stream has to reconnect with a fresh one).
+
+ LIMITS (change them together)
+   NMAX = 7,000,000 bytes per file. The database's largest string is 10 MB;
+   base64 adds a third and encryption 28 bytes, so a 7 MB file becomes about
+   9.33 million characters, under the 9,500,000 in the "blobs" rule. Larger
+   files would need splitting across several /blobs entries.
+   Note text: 4,000 characters in the text field (maxlength), 5,000 in
+   rules. Encrypted: at most 12,000 bytes of UTF-8 plus 28, which is 16,040
+   base64 characters, under the 16,500 in the "ct" rule.
+   File names: 200 characters in the code, 300 in the rules.
+   Shared key: 16 to 64 characters of A-Z a-z 0-9 _ - in the code (24 when
+   created here), at least 16 in the rules.
+
+ ENCRYPTION, FORMAT 1 (enc: 1)
+   Notes already stored depend on every detail below, so never change it
+   in place: for a new scheme, write enc: 2 on new notes and keep this one
+   for reading old ones. This version shows an unknown enc value as a note
+   that needs a newer page, and never downloads it as a plain file.
+   key   PBKDF2-HMAC-SHA-256 (passphrase in Unicode NFC, salt, 600,000
+         rounds) giving an AES-256-GCM key
+   salt  first 16 bytes of SHA-256("drawer.notes.v1|" + database address as
+         in NBASE), base64, saved in each note's "s", so notes still open
+         if the address changes. One salt per database, so one derivation
+         opens everything; that is what lets the key be kept (DATA KEPT ON
+         EACH DEVICE) instead of the passphrase. A kept key belongs to its
+         salt: after a change of NOTES_DB the page asks for the passphrase
+         once more before it can encrypt for the new address.
+   seal  12-byte random nonce + ciphertext + 16-byte tag (size + 28 bytes)
+   AAD   "n:<id>" for a file's meta, "f:<id>" for its contents, "t:<id>"
+         for a note's text, tying each to its note. The id is all the AAD
+         covers: t and size can be changed and a deleted note re-inserted
+         by anyone with the key, and decryption still succeeds.
+   meta  sealed JSON {n: file name, y: MIME type}, base64
+   ct    sealed UTF-8 text, base64
+   Runs in the browser with Web Crypto, which needs https (GitHub Pages has
+   it; so does localhost). This page never sends the passphrase anywhere;
+   Chrome may offer to save it as a password for this site, which is its
+   own doing. Opening, copying or sharing a note puts its plain text on
+   this device (Downloads, the clipboard, the app it is shared to).
+   One passphrase per device: after a change, notes encrypted before it
+   need the old one and show "Needs a different passphrase". Checking a
+   typed passphrase tries it against every encrypted note of up to three
+   salts, one derivation per salt.
+   Anyone with the key can test passphrase guesses offline against a
+   note's "meta" or "ct": at 600,000 rounds a high-end GPU tries about ten
+   thousand guesses a second, so a passphrase from a leaked-password list
+   or a word plus digits falls within hours, eight random lowercase letters
+   within months, while four random words hold for centuries. The sheet
+   asks for at least 8 characters; use several unrelated words.
+
+ CONVENTIONS
+   $ = document.querySelector; esc() escapes text for HTML template strings.
+   Anything typed by a person or read from the network goes in through
+   textContent or esc(). The one exception is a link's stored icon data
+   URL, which iconHTML() (called by render()) and drawPrev() put into the
+   markup as it is (see KNOWN LIMITS).
+   Names in the notes code: n... notes, N... notes constants, p... the
+   passphrase sheet.
+   Every sheet is a <dialog> opened with showModal(), so Android's Back
+   gesture and Esc close it ("cancel" event; Notes uses it to leave Select
+   mode first). The snackbar is a popover, so it shows above open sheets.
+   Colours are CSS variables on :root. The dark values appear twice (the
+   prefers-color-scheme block and [data-theme="dark"]): change both. The
+   page background is also a literal in the theme-color meta tag and in
+   applyPrefs(), which colours the browser bar.
+   interactive-widget=resizes-content in the viewport tag shrinks the page
+   when the keyboard opens, so the notes text field stays in view.
+
+ COMMON CHANGES
+   More or fewer tiles: COLS and ROWS in the script and the grid's columns
+     and rows in CSS (repeat(4, ...) and repeat(5, ...)).
+   A new field on notes: write it in nPostText()/nPostFile() (and in
+     nPostEdit() if it can change), read it in nItems(), show it in
+     nRender()/nFileBub(), and allow it in the rules.
+   Another Firebase project: change NOTES_DB and paste the rules. Notes
+     don't move by themselves (Data tab menu: Export JSON, then Import JSON
+     under /s/<key> in the new database); encrypted notes keep working
+     after the move, and the new address asks for the passphrase once.
+   A new key (Settings > Notes > Create a new key) starts an empty list on
+     this device; notes under the old key stay in the database until they
+     are deleted there.
+   Icon sources: PROVIDERS, tried in order. These third-party favicon
+     services can change or disappear; one that allows cross-origin reads
+     lets the icon be composed and saved on the device. As of October 2026
+     the first two (gstatic, DuckDuckGo) refuse cross-origin reads, so a
+     lookup always counts as blocked, and a host none of the others know
+     is shown straight from Google's service instead of as a letter.
+   Remove notes: the #notesBtn button, the #notes and #passSheet dialogs,
+     the Notes block in #settings, the notes CSS (including .ib.dot), the
+     notes section of the script, the key lines in the gear handler under
+     "settings", and the notes lines under "boot".
+
+ TESTING A CHANGE
+   1. Open the page on two devices (or two browsers) with the same key and
+      open Notes on both.
+   2. Send a note, an encrypted note, a file as it is and an encrypted
+      file: each appears on the other device straight away, the encrypted
+      ones once the passphrase has been entered there.
+   3. On the other device, tap a note: "Copied." Hold it: it moves into the
+      text field, and Save changes it on both devices. Tap both files: they
+      download, the encrypted one asking for the passphrase first; tap
+      again: the share sheet opens.
+   4. Select two items and delete them: they disappear at once here and on
+      the other device five seconds later, unless Undo was tapped.
+   5. Close Notes on one device, send from the other: after a reload, or
+      when the page comes back from the background, the Notes button on
+      the first device shows a dot.
+   6. Turn on flight mode: the page still opens (service worker), the list
+      stays readable and sending says it's offline.
+   7. Settings: switch the theme, shape and layout; export, then import a
+      backup. Commit a change: the next open offers "Reload".
+   During development this was also tested against a local stand-in for
+   the Firebase REST API, with phone and laptop browser sessions and
+   downloads compared byte for byte.
+
+ KNOWN LIMITS AND IDEAS
+   - A backup's icon strings are stored and rendered without checks
+     (import at the end of "settings"; iconHTML and drawPrev): a backup
+     made by someone else could inject markup into the grid. Only import
+     your own backups. Checking for ^data:image/... at import and esc() at
+     the two places it is rendered would close this.
+   - Uploads, downloads and sends have no timeout: a stalled transfer
+     stays at "Uploading 43%" until the connection drops.
+   - After a closed stream, a reconnect is scheduled only if the probe GET
+     succeeds; otherwise closing and reopening Notes reconnects.
+   - Icon lookups try the six providers one after another (up to 42 s per
+     host, minutes for "Refresh all icons"); a lookup that finishes after
+     an icon was chosen by hand overwrites it, and "Refresh all icons"
+     overwrites hand-picked icons too.
+   - A failed send puts the text back only if the text field is empty.
+   - Firebase echoes every write; ?print=silent on the write URLs would
+     halve a file's traffic.
+   - The list is rebuilt on every change and the stream loads every note on
+     connect: fine for hundreds of notes. For thousands, stream with
+     ?orderBy="$key"&limitToLast=200 (ids sort by time, so no index is
+     needed) and cap the local copy.
+   - One passphrase per device (no keyring for older passphrases).
+   - Files over 7 MB would need chunking (see LIMITS).
+   - Tiles open web addresses only (no intent:, tel: or geo:).
+   - The "Reload" offer after an update is a five-second snackbar; if it is
+     missed, the open after that shows the new copy anyway.
+
+ HISTORY
+   Launcher: grid, icons, settings, backup.
+   2026-10-10  Notes shared through Firebase.
+   2026-10-11  Files, stored as they are or encrypted; Select replaced Clear.
+   2026-10-13  These comments.
+   2026-10-14  Notes under a shared key. Encrypted text notes. The derived
+               key is kept instead of the passphrase. Tap to copy, hold to
+               edit, send the clipboard. Share a downloaded file. Undo for
+               deleted notes; snackbar as a popover. Dot for new notes.
+               Service worker (sw.js). Grid fills from the bottom; buttons
+               moved under it.
+==============================================================================
+-->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" id="themeColor" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Home</title>
+<script>
+/* Apply the saved theme, icon shape and grid layout before first paint (no flash of the wrong colours). */
+(function(){var r=document.documentElement,s=null;try{s=JSON.parse(localStorage.getItem('drawer.v1'))}catch(e){}
+r.dataset.shape=(s&&s.shape)||'squircle';r.dataset.fill=(s&&s.fill==='top')?'top':'bottom';if(s&&s.theme&&s.theme!=='system')r.dataset.theme=s.theme;})();
+</script>
+<style>
+/* ---------- design tokens ----------
+   Light values here; dark values in the two blocks below (the system's dark mode unless Light was
+   chosen in Settings, and Dark chosen in Settings). Keep the two dark blocks identical.
+   --sock icon background · --line borders · --btn field background · --bub note bubbles
+   --icon icon size, scales with the screen width */
+:root{
+  color-scheme:light dark;
+  --bg:#F0F1F4; --fg:#15161A; --fg2:#6A6E78; --sheet:#FFFFFF;
+  --sock:rgba(0,0,0,.06); --line:rgba(0,0,0,.11); --btn:rgba(0,0,0,.05);
+  --danger:#C8423E; --shadow:0 14px 36px rgba(0,0,0,.22); --bub:rgba(0,0,0,.065);
+  --icon:clamp(54px,15vw,66px);
+  --font:system-ui,-apple-system,Roboto,"Segoe UI",sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#000; --fg:#ECEAE4; --fg2:#8A8D93; --sheet:#17181B;
+    --sock:rgba(255,255,255,.075); --line:rgba(255,255,255,.13); --btn:rgba(255,255,255,.08);
+    --danger:#E8635F; --shadow:0 14px 36px rgba(0,0,0,.65); --bub:rgba(255,255,255,.09);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#000; --fg:#ECEAE4; --fg2:#8A8D93; --sheet:#17181B;
+  --sock:rgba(255,255,255,.075); --line:rgba(255,255,255,.13); --btn:rgba(255,255,255,.08);
+  --danger:#E8635F; --shadow:0 14px 36px rgba(0,0,0,.65); --bub:rgba(255,255,255,.09);
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}   /* the hidden attribute must beat the display:flex/grid rules below */
+html{background:var(--bg)}
+body{
+  margin:0; min-height:100dvh; display:flex; flex-direction:column;
+  background:var(--bg); color:var(--fg); font-family:var(--font); font-size:14px;
+  padding:calc(env(safe-area-inset-top) + 10px) calc(14px + env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 6px) calc(14px + env(safe-area-inset-left));
+  -webkit-tap-highlight-color:transparent; -webkit-text-size-adjust:100%;
+}
+button{font-family:var(--font); cursor:pointer; touch-action:manipulation}
+:focus-visible{outline:2px solid var(--fg); outline-offset:2px}
+
+/* ---------- header ----------
+   The clock and date. The buttons (Notes, Settings, Edit) sit in .actions under the grid, in thumb reach;
+   #hint moves under the grid too when it fills from the bottom (order: header 0, hint 1, grid 2, actions 4). */
+header{display:flex; align-items:flex-start; justify-content:space-between; padding:8px 6px 10px}
+.time{display:block; font-size:34px; font-weight:300; line-height:1; letter-spacing:-.02em; font-variant-numeric:tabular-nums}
+.date{display:block; margin-top:7px; font-size:11px; font-weight:500; letter-spacing:.14em; text-transform:uppercase; color:var(--fg2)}
+.actions{display:flex; gap:8px; align-items:center; justify-content:flex-end; padding:12px 6px 0; order:4}
+.pill,.ib{position:relative; height:36px; border:1px solid var(--line); background:transparent; color:var(--fg); border-radius:18px}
+.ib.dot::after{content:""; position:absolute; top:5px; right:5px; width:8px; height:8px; border-radius:50%; background:var(--danger)}   /* a note arrived since Notes was last open */
+.pill{padding:0 15px; font-size:13px; font-weight:500; min-width:66px}
+.ib{width:36px; display:grid; place-items:center; padding:0}
+.editing .pill{background:var(--fg); color:var(--bg); border-color:var(--fg)}
+.hint{margin:0 6px 14px; color:var(--fg2); font-size:14px; line-height:1.45; max-width:34ch; order:1}
+[data-fill="bottom"] .hint{order:3; margin:14px 6px 0}
+
+/* ---------- grid ----------
+   4 columns x 5 rows = COLS x ROWS (20) in the script; change both together. Each cell is a tile (a link,
+   or a button in Edit mode), the "Add page" button, or an empty cell shown only while editing. With the
+   default layout render() gives every cell a grid-row so slot 0 is bottom-left and the empties float up. */
+.grid{
+  flex:1; display:grid; grid-template-columns:repeat(4,1fr); grid-template-rows:repeat(5,minmax(98px,1fr));
+  gap:2px; align-items:center; order:2;
+}
+.editing .grid{touch-action:none; user-select:none; -webkit-user-select:none}
+.cell{
+  position:relative; display:flex; flex-direction:column; align-items:center; justify-content:flex-start;
+  min-width:0; padding:8px 2px 4px; border-radius:18px; border:0; background:none;
+  color:inherit; text-decoration:none; text-align:center; -webkit-user-drag:none;
+}
+.cell:focus-visible{outline-offset:-2px}
+.ic{
+  position:relative; width:var(--icon); height:var(--icon); flex:none;
+  display:grid; place-items:center; overflow:hidden; background:var(--sock);
+  transition:transform .12s ease; -webkit-user-drag:none;
+}
+.ic img{width:100%; height:100%; display:block; object-fit:cover; pointer-events:none; -webkit-user-drag:none}
+.ic.remote img{width:62%; height:62%; object-fit:contain}
+.ic.mono{background:hsl(var(--h) 55% 87%); color:hsl(var(--h) 45% 30%); font-weight:600; font-size:calc(var(--icon)*.44); letter-spacing:-.02em; line-height:1}
+.lb{
+  margin-top:7px; font-size:12px; font-weight:500; line-height:1.25; letter-spacing:-.005em;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  max-width:100%; min-height:2.5em; overflow-wrap:anywhere; color:var(--fg); opacity:.92;
+}
+.cell:active .ic{transform:scale(.9)}
+.add .ic{color:var(--fg2)}
+.add .lb{color:var(--fg2)}
+.empty{visibility:hidden}
+.editing .empty{visibility:visible}
+.empty .ic{opacity:.55}
+.tile.ph .ic,.tile.ph .lb{opacity:.22}
+.editing .tile{cursor:grab}
+
+/* icon shapes (Android adaptive-icon masks) */
+[data-shape="squircle"] .ic{clip-path:url(#sq)}
+[data-shape="circle"] .ic{border-radius:50%}
+[data-shape="round"] .ic{border-radius:24%}
+[data-shape="drop"] .ic{clip-path:url(#td)}
+
+/* remove badge (edit mode) */
+.rm{
+  position:absolute; top:0; left:calc(50% - var(--icon)/2 - 9px); width:32px; height:32px;
+  border:0; background:transparent; padding:0; display:grid; place-items:center; z-index:2; color:var(--bg);
+}
+.rm span{width:22px; height:22px; border-radius:50%; background:var(--fg); border:2px solid var(--bg); display:grid; place-items:center}
+
+/* drag ghost */
+.ghost{
+  position:fixed; left:0; top:0; z-index:40; pointer-events:none; will-change:transform;
+  filter:drop-shadow(0 10px 18px rgba(0,0,0,.45));
+}
+
+/* ---------- sheets ----------
+   Every sheet is a <dialog> pinned to the bottom of the screen and opened with showModal().
+   dialog.notes is full height; dialog.narrow caps the width on large screens. */
+dialog{
+  position:fixed; inset:auto 0 0 0; margin:0; width:100%; max-width:100%; max-height:92dvh;
+  border:0; border-radius:22px 22px 0 0; background:var(--sheet); color:var(--fg);
+  padding:12px 20px calc(18px + env(safe-area-inset-bottom)); box-shadow:var(--shadow); overflow:auto;
+}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+.grip{width:36px; height:4px; border-radius:2px; background:var(--line); margin:0 auto 16px}
+h2{font-size:17px; font-weight:600; margin:0 0 16px; letter-spacing:-.01em}
+h3{font-size:11px; font-weight:500; letter-spacing:.12em; text-transform:uppercase; color:var(--fg2); margin:22px 0 10px}
+h3:first-of-type{margin-top:0}
+.f{display:block; margin-bottom:14px}
+.f>span{display:block; font-size:11px; font-weight:500; letter-spacing:.12em; text-transform:uppercase; color:var(--fg2); margin-bottom:7px}
+input[type=text],input[type=url],input[type=password]{
+  width:100%; height:48px; border-radius:12px; border:1px solid var(--line); background:var(--btn);
+  color:var(--fg); padding:0 14px; font:16px var(--font); outline:none; -webkit-appearance:none;
+}
+input:focus-visible{border-color:var(--fg); outline:none}
+.err{color:var(--danger); font-size:13px; margin:-8px 0 12px; min-height:0}
+.row + .err{margin-top:6px}   /* after a .row there is no label margin to overlap */
+.iconrow{display:flex; gap:16px; align-items:center; margin:2px 0 12px}
+.iconrow .ic{--icon:64px}
+.chips{display:flex; flex-wrap:wrap; gap:8px}
+.chip{height:36px; padding:0 14px; border-radius:18px; border:1px solid var(--line); background:transparent; color:var(--fg); font-size:13px; font-weight:500}
+.status{font-size:13px; color:var(--fg2); min-height:18px; margin:0 0 16px}
+.primary{width:100%; height:50px; border-radius:14px; border:0; background:var(--fg); color:var(--bg); font-size:15px; font-weight:600}
+.quiet{width:100%; height:44px; border:0; background:transparent; color:var(--fg2); font-size:14px; font-weight:500; margin-top:4px}
+.quiet.danger{color:var(--danger)}
+.seg{display:flex; gap:6px}
+.seg button{flex:1; height:40px; border-radius:12px; border:1px solid var(--line); background:transparent; color:var(--fg); font-size:13px; font-weight:500}
+.seg button[aria-pressed="true"],.shapes button[aria-pressed="true"]{background:var(--fg); color:var(--bg); border-color:var(--fg)}
+.shapes{display:grid; grid-template-columns:repeat(4,1fr); gap:6px}
+.shapes button{display:flex; flex-direction:column; align-items:center; gap:8px; padding:12px 0 9px; border-radius:12px; border:1px solid var(--line); background:transparent; color:var(--fg); font-size:11px; font-weight:500}
+.sw{width:34px; height:34px; background:currentColor}
+.sw.squircle{clip-path:url(#sq)} .sw.circle{border-radius:50%} .sw.round{border-radius:24%} .sw.drop{clip-path:url(#td)}
+.row{display:flex; gap:8px; align-items:center}
+.row input{flex:1; height:44px; font-size:13px; font-family:ui-monospace,Menlo,monospace}
+.small{font-size:13px; color:var(--fg2); line-height:1.45; margin:8px 0 0}
+.stack{display:flex; flex-direction:column; gap:8px}
+.wide{height:44px; border-radius:12px; border:1px solid var(--line); background:transparent; color:var(--fg); font-size:14px; font-weight:500}
+
+/* ---------- notes sheet ----------
+   Layout: .nhead (title + buttons), .nstat (status line), .msgs (the list, the only part that
+   scrolls), then .composer, or .selbar while selecting. Each note is li.msg > .tick + .mcol > .bub + time;
+   a file or a locked note is a button.fbub, a readable note a div.bub (tap copies, hold edits). */
+dialog.notes{
+  top:calc(env(safe-area-inset-top) + 24px); bottom:0; height:auto; max-height:none; max-width:680px; margin:0 auto;
+  overflow:hidden; overscroll-behavior:contain; padding-bottom:calc(12px + env(safe-area-inset-bottom));
+}
+dialog.notes[open]{display:flex; flex-direction:column}
+.nhead{display:flex; align-items:center; gap:8px; margin-bottom:10px}
+.nhead h2{flex:1; margin:0}
+.chip:disabled{opacity:.35; cursor:default}
+.nstat{margin:0 0 8px; font-size:13px; line-height:1.4; color:var(--fg2)}
+.nstat:empty{display:none}
+.nstat.bad{color:var(--danger)}
+.msgs{
+  flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; list-style:none;
+  margin:0 -20px; padding:4px 20px 14px; display:flex; flex-direction:column;
+}
+.msgs:focus{outline:none}
+.msgs::before{content:""; flex:1 0 0}   /* few notes: sit at the bottom, next to the text field */
+.msgs.blank::before{display:none}
+.day{align-self:center; margin:18px 0 6px; font-size:11px; font-weight:500; letter-spacing:.12em; text-transform:uppercase; color:var(--fg2)}
+.day:first-child{margin-top:6px}
+.msg{align-self:flex-end; max-width:86%; display:flex; align-items:flex-end; margin-top:8px}
+.mcol{display:flex; flex-direction:column; align-items:flex-end; min-width:0; max-width:100%}
+.bub{
+  max-width:100%; padding:9px 13px; border-radius:18px 18px 6px 18px; background:var(--bub); color:var(--fg);
+  font-size:15px; line-height:1.4; white-space:pre-wrap; overflow-wrap:anywhere;
+}
+.bub a{color:inherit; text-decoration:underline; text-decoration-thickness:1px; text-underline-offset:2px}
+.mt{margin:4px 6px 0; font-size:11px; color:var(--fg2); font-variant-numeric:tabular-nums}
+.mt svg{width:11px; height:11px; vertical-align:-1px; margin-right:3px}   /* the lock before the time of an encrypted note */
+@media (hover:none){.msgs .msg[data-kind="text"] .bub{-webkit-user-select:none; user-select:none}}   /* so holding a note edits it instead of selecting text */
+.msg.pending .bub{opacity:.5}
+/* files */
+.fbub{display:flex; align-items:center; gap:11px; padding:8px 15px 8px 8px; border:0; text-align:left; white-space:normal}
+.fbub:active{opacity:.75}
+.fic{flex:none; width:40px; height:40px; border-radius:11px; display:grid; place-items:center; background:var(--fg); color:var(--bg); font-size:10px; font-weight:700; letter-spacing:.06em}
+.fmeta{display:flex; flex-direction:column; min-width:0}
+.fname{font-weight:500; line-height:1.3; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere}
+.fsub{margin-top:2px; font-size:12px; line-height:1.3; color:var(--fg2)}
+.fsub.bad{color:var(--danger)}
+/* selecting notes to delete */
+.tick{display:none; flex:none; width:22px; height:22px; margin-right:auto; border-radius:50%; border:2px solid var(--fg2); place-items:center; color:var(--bg)}
+.selecting .msgs .msg{align-self:stretch; max-width:none; align-items:center; gap:14px; margin:2px -12px 0; padding:6px 12px; border-radius:16px; cursor:pointer; -webkit-user-select:none; user-select:none}
+.selecting .msgs .mcol{max-width:86%}
+.selecting .msgs .tick{display:grid}
+.selecting .msgs .msg.pending{cursor:default}
+.selecting .msgs .msg.pending .tick{visibility:hidden}
+.selecting .msgs .bub a{pointer-events:none}
+.msg[aria-checked="true"]{background:var(--sock)}
+.msg[aria-checked="true"] .tick{background:var(--fg); border-color:var(--fg)}
+.msg[aria-checked="true"] .tick::after{content:""; width:9px; height:5px; margin-top:-2px; border:solid currentColor; border-width:0 0 2px 2px; transform:rotate(-45deg)}
+.msg[role="checkbox"]:focus-visible{outline-offset:-2px}
+.nempty{margin:auto; padding:24px 8px; max-width:32ch; text-align:center; font-size:14px; line-height:1.5; color:var(--fg2)}
+.composer,.selbar{margin:0 -20px; padding:10px 20px 0; border-top:1px solid var(--line)}
+.crow{display:flex; gap:8px; align-items:flex-end}
+.attach{flex:none; width:40px; height:40px; border-radius:50%; color:var(--fg2); margin-bottom:3px}
+.stage{display:flex; align-items:center; gap:10px; margin-bottom:10px; padding:7px 7px 7px 8px; border-radius:16px; background:var(--btn)}
+.stage .fic{width:36px; height:36px; border-radius:10px}
+.stage .fmeta{flex:1}
+.stage .fname{font-size:14px; -webkit-line-clamp:1}
+.chip.enc{display:inline-flex; align-items:center; gap:6px; padding:0 13px 0 11px}
+.chip.enc[aria-pressed="true"]{background:var(--fg); color:var(--bg); border-color:var(--fg)}
+.delbtn{width:100%; height:46px; border-radius:23px; border:1px solid var(--danger); background:transparent; color:var(--danger); font-size:15px; font-weight:600}
+.delbtn.arm{background:var(--danger); color:var(--sheet)}
+.delbtn:disabled{opacity:.35; cursor:default}
+/* composer */
+.editbar{display:flex; align-items:center; gap:8px; margin-bottom:8px; padding:4px 4px 4px 12px; border-radius:14px; background:var(--btn); font-size:13px; color:var(--fg2)}
+.editbar span{flex:1}
+.tool{flex:none; width:34px; height:34px; margin-bottom:6px; color:var(--fg2)}   /* #pasteBtn hides while there is text or a file */
+.tool[aria-pressed="true"]{background:var(--fg); color:var(--bg); border-color:var(--fg)}
+.composer textarea{
+  flex:1; min-width:0; height:46px; min-height:46px; max-height:148px; resize:none; overflow-y:auto;
+  border-radius:23px; border:1px solid var(--line); background:var(--btn); color:var(--fg);
+  padding:11px 16px; font:16px/22px var(--font); outline:none; -webkit-appearance:none;
+}
+.composer textarea:focus-visible{border-color:var(--fg)}
+.composer textarea::placeholder{color:var(--fg2)}
+.send{flex:none; width:46px; height:46px; border:0; border-radius:50%; padding:0; display:grid; place-items:center; background:var(--fg); color:var(--bg)}
+.send:disabled{opacity:.3; cursor:default}
+/* passphrase sheet */
+dialog.narrow{max-width:520px; margin:0 auto}
+.pintro{margin:-6px 0 18px}
+.check{display:flex; align-items:center; gap:10px; margin:2px 0 18px; font-size:14px}
+.check input{width:18px; height:18px; margin:0; accent-color:var(--fg)}
+
+/* snackbar: a popover, so it is in the top layer above open sheets. The browser's own popover styles
+   (inset:0, margin:auto, border, width:fit-content) are undone first; display is set only while open,
+   because any display on .snack itself would override the browser's hidden state. */
+.snack{
+  position:fixed; inset:auto; left:50%; bottom:calc(74px + env(safe-area-inset-bottom)); transform:translateX(-50%);
+  margin:0; border:0; overflow:visible; width:max-content; height:auto;
+  background:var(--fg); color:var(--bg); border-radius:14px; padding:6px 6px 6px 16px;
+  gap:10px; align-items:center; font-size:14px; box-shadow:var(--shadow); z-index:30;
+  max-width:calc(100vw - 32px); white-space:nowrap;
+}
+.snack:popover-open{display:flex}
+.snack.on{display:flex}   /* kept apart: a browser without :popover-open would drop a shared rule */
+@supports not selector(:popover-open){.snack:not(.on){display:none}}
+.snack span{overflow:hidden; text-overflow:ellipsis}
+.snack button{background:transparent; border:0; color:inherit; font-size:14px; font-weight:600; padding:10px 12px; border-radius:10px}
+
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<!-- clip paths for the Squircle and Teardrop icon shapes (used by clip-path in the CSS) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <clipPath id="sq" clipPathUnits="objectBoundingBox"><path d="M.5 0C.125 0 0 .125 0 .5 0 .875 .125 1 .5 1 .875 1 1 .875 1 .5 1 .125 .875 0 .5 0Z"/></clipPath>
+    <clipPath id="td" clipPathUnits="objectBoundingBox"><path d="M.5 0C.875 0 1 .125 1 .5V1H.5C.125 1 0 .875 0 .5 0 .125 .125 0 .5 0Z"/></clipPath>
+  </defs>
+</svg>
+
+<!-- header: clock and date (filled in by tick()) -->
+<header>
+  <div>
+    <time class="time" id="time" aria-live="off">--:--</time>
+    <span class="date" id="date"></span>
+  </div>
+</header>
+
+<p class="hint" id="hint" hidden>Tap + to add a page you open often. Each one gets a name and an icon, saved on this phone.</p>
+
+<!-- the grid: built by render() from the saved links -->
+<main class="grid" id="grid" aria-label="Your pages"></main>
+
+<!-- the bar under the grid: Notes (with a dot when a note arrived since Notes was last open), Settings, Edit -->
+<nav class="actions" aria-label="Page actions">
+    <button class="ib" id="notesBtn" type="button" aria-label="Notes">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"/></svg>
+    </button>
+    <button class="ib" id="gear" type="button" aria-label="Settings">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h8M18 7h2M4 17h2M12 17h8"/><circle cx="15" cy="7" r="2.5"/><circle cx="9" cy="17" r="2.5"/></svg>
+    </button>
+    <button class="pill" id="edit" type="button" aria-pressed="false">Edit</button>
+</nav>
+
+<!-- add / edit sheet: opened by the "Add page" tile, or by tapping a tile in Edit mode (openSheet) -->
+<dialog id="sheet" aria-labelledby="sheetTitle">
+  <div class="grip"></div>
+  <form id="form" novalidate>
+    <h2 id="sheetTitle">Add page</h2>
+    <label class="f"><span>Web address</span>
+      <input id="url" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="example.com" required>
+    </label>
+    <div class="err" id="urlErr" role="alert"></div>
+    <label class="f"><span>Name</span>
+      <input id="name" type="text" autocomplete="off" maxlength="40" placeholder="Shown under the icon">
+    </label>
+    <div class="f"><span>Icon</span>
+      <div class="iconrow">
+        <div id="prev" aria-hidden="true"></div>
+        <div class="chips">
+          <button class="chip" type="button" id="findBtn">Find icon</button>
+          <button class="chip" type="button" id="imgBtn">Choose image</button>
+          <button class="chip" type="button" id="letterBtn">Use letter</button>
+        </div>
+      </div>
+      <div class="status" id="status">The icon is found automatically after you save.</div>
+    </div>
+    <input type="file" id="file" accept="image/*" hidden>
+    <button class="primary" type="submit" id="saveBtn">Add page</button>
+    <button class="quiet danger" type="button" id="removeBtn" hidden>Remove page</button>
+    <button class="quiet" type="button" id="cancelBtn">Cancel</button>
+  </form>
+</dialog>
+
+<!-- settings sheet: opened by the sliders button (#gear) -->
+<dialog id="settings" aria-labelledby="setTitle">
+  <div class="grip"></div>
+  <h2 id="setTitle">Settings</h2>
+
+  <h3>Icon shape</h3>
+  <div class="shapes" id="shapes" role="group" aria-label="Icon shape">
+    <button type="button" data-shape="squircle"><span class="sw squircle"></span>Squircle</button>
+    <button type="button" data-shape="circle"><span class="sw circle"></span>Circle</button>
+    <button type="button" data-shape="round"><span class="sw round"></span>Rounded</button>
+    <button type="button" data-shape="drop"><span class="sw drop"></span>Teardrop</button>
+  </div>
+
+  <h3>Layout</h3>
+  <div class="seg" id="fills" role="group" aria-label="Layout">
+    <button type="button" data-fill="bottom">Fill from the bottom</button>
+    <button type="button" data-fill="top">Fill from the top</button>
+  </div>
+
+  <h3>Appearance</h3>
+  <div class="seg" id="themes" role="group" aria-label="Appearance">
+    <button type="button" data-theme="system">System</button>
+    <button type="button" data-theme="dark">Dark</button>
+    <button type="button" data-theme="light">Light</button>
+  </div>
+
+  <h3>Homepage address</h3>
+  <div class="row">
+    <input type="text" id="addr" readonly aria-label="This page's address">
+    <button class="chip" type="button" id="copyBtn">Copy</button>
+  </div>
+  <p class="small">Chrome: ⋮ › Settings › Homepage › turn it on › Enter custom web address › paste this.</p>
+
+  <h3>Notes</h3>
+  <div class="row">
+    <input type="text" id="keyIn" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Shared key" aria-label="Shared key for notes">
+    <button class="chip" type="button" id="keySave">Save</button>
+  </div>
+  <div class="err" id="keyErr" role="alert"></div>
+  <div class="stack">
+    <button class="wide" type="button" id="keyCopy">Copy the key</button>
+    <button class="wide" type="button" id="keyNew">Create a new key</button>
+  </div>
+  <p class="small">Notes and files are shared between the devices that have the same key. Create one here, then copy it to your other devices.</p>
+
+  <h3>Icons and backup</h3>
+  <div class="stack">
+    <button class="wide" type="button" id="refreshBtn">Refresh all icons</button>
+    <button class="wide" type="button" id="exportBtn">Export pages and icons</button>
+    <button class="wide" type="button" id="importBtn">Import a backup…</button>
+    <input type="file" id="importFile" accept="application/json,.json" hidden>
+  </div>
+  <p class="small" id="slots"></p>
+
+  <button class="quiet danger" type="button" id="resetBtn">Remove all pages</button>
+  <button class="quiet" type="button" id="setClose">Close</button>
+</dialog>
+
+<!-- notes sheet: one shared list of notes and files, stored in Firebase under the shared key (see FIREBASE
+     at the top of the file). #composer is shown while writing (with #editbar while a note is being edited
+     and #stage while a file waits), #selbar while selecting items to delete. -->
+<dialog id="notes" class="notes" aria-labelledby="notesTitle">
+  <div class="grip"></div>
+  <div class="nhead">
+    <h2 id="notesTitle">Notes</h2>
+    <button class="ib" type="button" id="keyBtn" aria-label="Encryption passphrase" hidden>
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3M16 7l3 3M13.5 9.5l2 2"/></svg>
+    </button>
+    <button class="chip" type="button" id="allBtn" hidden>All</button>
+    <button class="chip" type="button" id="selBtn" disabled>Select</button>
+    <button class="ib" type="button" id="notesClose" aria-label="Close notes">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </div>
+  <p class="nstat" id="nstat" role="status"></p>
+  <ol class="msgs" id="msgs" tabindex="-1" autofocus aria-label="Sent notes"></ol>
+  <form class="composer" id="composer" autocomplete="off">
+    <div class="editbar" id="editbar" hidden><span>Editing a note</span><button class="chip" type="button" id="editCancel">Cancel</button></div>
+    <div class="stage" id="stage" hidden>
+      <span class="fic" id="stageIc" aria-hidden="true"></span>
+      <span class="fmeta"><span class="fname" id="stageName"></span><span class="fsub" id="stageSize"></span></span>
+      <button class="ib" type="button" id="unstageBtn" aria-label="Remove the file">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <div class="crow">
+      <button class="ib attach" type="button" id="attachBtn" aria-label="Attach a file">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m20.5 11.5-8.3 8.3a5.5 5.5 0 0 1-7.8-7.8l8.3-8.3a3.7 3.7 0 0 1 5.2 5.2l-8.3 8.3a1.8 1.8 0 0 1-2.6-2.6l7.6-7.6"/></svg>
+      </button>
+      <button class="ib tool" type="button" id="lockBtn" aria-label="Encrypt what you send" aria-pressed="false">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="11" width="15" height="10" rx="2.5"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg>
+      </button>
+      <button class="ib tool" type="button" id="pasteBtn" aria-label="Send what was copied">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5" width="13" height="16" rx="2"/><path d="M9 5V3.5h6V5M9 11h6M9 15h6"/></svg>
+      </button>
+      <textarea id="noteIn" rows="1" maxlength="4000" placeholder="Write a note" aria-label="Note"></textarea>
+      <button class="send" type="submit" id="sendBtn" aria-label="Send" disabled>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+      </button>
+    </div>
+    <input type="file" id="fileIn" hidden>
+  </form>
+  <div class="selbar" id="selbar" hidden>
+    <button class="delbtn" type="button" id="delBtn" disabled>Delete</button>
+  </div>
+</dialog>
+
+<!-- passphrase sheet: the passphrase for encrypted notes and files. Opens over Notes: #passHave when a
+     key is already on this device (key button), #passEntry to type a passphrase (nAskPass). -->
+<dialog id="passSheet" class="narrow" aria-labelledby="passTitle">
+  <div class="grip"></div>
+  <form id="passForm" novalidate>
+    <h2 id="passTitle">Encryption passphrase</h2>
+    <p class="small pintro" id="passIntro"></p>
+    <div class="stack" id="passHave" hidden>
+      <button class="wide" type="button" id="passChange">Change passphrase</button>
+      <button class="wide" type="button" id="passForget">Forget it on this device</button>
+    </div>
+    <div id="passEntry">
+      <label class="f"><span>Passphrase</span>
+        <input id="passIn" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="200">
+      </label>
+      <label class="f" id="pass2Wrap"><span>Type it again</span>
+        <input id="pass2In" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="200">
+      </label>
+      <div class="err" id="passErr" role="alert"></div>
+      <label class="check"><input type="checkbox" id="passRemember" checked>Keep the key on this device</label>
+      <button class="primary" type="submit" id="passSave">Save passphrase</button>
+    </div>
+    <button class="quiet" type="button" id="passCancel">Cancel</button>
+  </form>
+</dialog>
+
+<!-- snackbar: short messages with an optional action such as Undo (see snack()); a popover, so it shows above open sheets -->
+<div class="snack" id="snack" role="status" popover="manual"><span id="snackMsg"></span><button type="button" id="snackBtn">Undo</button></div>
+
+<script>
+(() => {
+'use strict';
+/* The whole app runs inside this one function, so nothing leaks into the page's global scope.
+   The comment at the top of the file maps the sections below and documents data, Firebase and limits. */
+
+/* NOTES: paste your Firebase Realtime Database address between the quotes, for example
+   'https://my-home-default-rtdb.europe-west1.firebasedatabase.app'. Leave it empty to keep notes off.
+   The database also needs the security rules listed under FIREBASE at the top of the file, and each
+   device needs the shared key (Settings > Notes); the address alone gives access to nothing. */
+const NOTES_DB = 'https://tv-db-68534-default-rtdb.europe-west1.firebasedatabase.app/';
+
+const COLS = 4, ROWS = 5, SLOTS = COLS * ROWS, KEY = 'drawer.v1', IK = 'drawer.icon.';
+const SHAPES = ['squircle', 'circle', 'round', 'drop'], THEMES = ['system', 'dark', 'light'], FILLS = ['bottom', 'top'];
+const $ = s => document.querySelector(s);
+const grid = $('#grid'), hint = $('#hint'), body = document.body;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const PLUS = '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+const MINUS = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>';
+
+/* ---------- state ----------
+   state is drawer.v1: {links: [{id, name, url, noicon?, remote?, tried?}], shape, theme, fill}.
+   Icons are stored apart (drawer.icon.<id>) because they're big; getIcon/setIcon handle them.
+   Every change goes through save(); the grid then redraws with render(). */
+function load(){
+  let s = null;
+  try{ s = JSON.parse(localStorage.getItem(KEY)); }catch(e){}
+  s = s && Array.isArray(s.links) ? Object.assign({shape:'squircle', theme:'system', fill:'bottom'}, s) : {links:[], shape:'squircle', theme:'system', fill:'bottom'};
+  if (!SHAPES.includes(s.shape)) s.shape = 'squircle'; if (!THEMES.includes(s.theme)) s.theme = 'system'; if (!FILLS.includes(s.fill)) s.fill = 'bottom';
+  return s;
+}
+let state = load();
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){ toast('Couldn’t save — storage is full or blocked.'); } }
+const getIcon = id => { try{ return localStorage.getItem(IK + id); }catch(e){ return null; } };
+const setIcon = (id, d) => { try{ d ? localStorage.setItem(IK + id, d) : localStorage.removeItem(IK + id); }catch(e){ toast('Icon not saved — storage is full.'); } };
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);   /* ids for links and notes */
+
+/* page names: HOSTS maps whole hostnames, BRANDS fixes capitalisation of the main part (nos.nl -> NOS) */
+const hostOf = u => { try{ return new URL(u).hostname.replace(/^www\./, ''); }catch(e){ return ''; } };
+function hue(s){ let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 360; }
+const HOSTS = {'mail.google.com':'Gmail','maps.google.com':'Maps','drive.google.com':'Drive','docs.google.com':'Docs','calendar.google.com':'Calendar','photos.google.com':'Photos','translate.google.com':'Translate','news.google.com':'Google News','music.youtube.com':'YouTube Music','web.whatsapp.com':'WhatsApp','outlook.office.com':'Outlook','outlook.live.com':'Outlook','teams.microsoft.com':'Teams','web.telegram.org':'Telegram','mail.proton.me':'Proton Mail'};
+const BRANDS = {youtube:'YouTube',github:'GitHub',gitlab:'GitLab',linkedin:'LinkedIn',whatsapp:'WhatsApp',tiktok:'TikTok',chatgpt:'ChatGPT',openai:'OpenAI',icloud:'iCloud',ebay:'eBay',paypal:'PayPal',onedrive:'OneDrive',sharepoint:'SharePoint',wordpress:'WordPress',duckduckgo:'DuckDuckGo',stackoverflow:'Stack Overflow',imdb:'IMDb',bbc:'BBC',nos:'NOS',nu:'NU.nl',ns:'NS',ing:'ING',kpn:'KPN',rtl:'RTL',npo:'NPO',anwb:'ANWB',knmi:'KNMI',ah:'Albert Heijn',bol:'bol',x:'X'};
+function nameFrom(host){
+  if (!host) return '';
+  if (HOSTS[host]) return HOSTS[host];
+  if (/^[\d.:\[\]]+$/.test(host)) return host;
+  const p = host.split('.'); let n = p[0];
+  if (p.length >= 3 && /^(co|com|org|net|gov|edu|ac|or|ne)$/.test(p[p.length - 2])) n = p[p.length - 3];
+  else if (p.length >= 2) n = p[p.length - 2];
+  return BRANDS[n] || n.charAt(0).toUpperCase() + n.slice(1);
+}
+function normalizeUrl(v){
+  v = String(v || '').trim(); if (!v) return null;
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(v)) v = 'https://' + v;
+  try{ const u = new URL(v); if (!/^https?:$/.test(u.protocol) || !u.hostname.includes('.') && u.hostname !== 'localhost') return null; return u.href; }catch(e){ return null; }
+}
+
+/* ---------- render ----------
+   render() rebuilds all SLOTS cells from state.links: tiles (links normally, buttons in Edit mode),
+   one "Add page" button after the last tile, then empty cells. Icons: a saved one, else a remote
+   URL, else the first letter on a colour taken from the address (monoHTML). With fill = bottom each
+   cell gets its grid-row, so slot 0 is bottom-left; the DOM order (and so the drag code's slot numbers)
+   never changes. */
+function monoHTML(name, url){
+  const host = hostOf(url), ch = (name || host || '?').trim().charAt(0).toUpperCase();
+  return `<span class="ic mono" style="--h:${hue(host || name)}">${esc(ch)}</span>`;
+}
+function iconHTML(l){
+  if (!l.noicon){
+    const d = getIcon(l.id);
+    if (d) return `<span class="ic"><img alt="" src="${d}" width="128" height="128" draggable="false"></span>`;
+    if (l.remote) return `<span class="ic remote"><img alt="" src="${esc(l.remote)}" referrerpolicy="no-referrer" draggable="false"></span>`;
+  }
+  return monoHTML(l.name, l.url);
+}
+/* a web-loaded icon that fails to load falls back to the letter tile */
+grid.addEventListener('error', e => {
+  const img = e.target; if (!img || img.tagName !== 'IMG') return;
+  const tile = img.closest('.tile'), ic = img.closest('.ic'), l = tile && state.links[+tile.dataset.i];
+  if (l && ic) ic.outerHTML = monoHTML(l.name, l.url);
+}, true);
+function render(){
+  const L = state.links; let html = '';
+  const row = i => state.fill === 'bottom' ? ` style="grid-row:${ROWS - Math.floor(i / COLS)}"` : '';
+  for (let i = 0; i < SLOTS; i++){
+    const l = L[i];
+    if (l){
+      const ic = iconHTML(l), lb = `<span class="lb">${esc(l.name)}</span>`;
+      html += editing
+        ? `<div class="cell tile" role="button" tabindex="0" data-i="${i}"${row(i)} aria-label="Edit ${esc(l.name)}">${ic}${lb}<button class="rm" type="button" data-i="${i}" aria-label="Remove ${esc(l.name)}"><span>${MINUS}</span></button></div>`
+        : `<a class="cell tile" href="${esc(l.url)}" data-i="${i}"${row(i)} draggable="false">${ic}${lb}</a>`;
+    } else if (i === L.length){
+      html += `<button class="cell add" type="button"${row(i)} aria-label="Add a page"><span class="ic">${PLUS}</span><span class="lb">Add page</span></button>`;
+    } else {
+      html += `<div class="cell empty"${row(i)} aria-hidden="true"><span class="ic"></span></div>`;
+    }
+  }
+  grid.innerHTML = html;
+  hint.hidden = L.length > 0;
+}
+
+/* ---------- edit mode ---------- */
+let editing = false;
+const editBtn = $('#edit');
+function setEditing(v){
+  editing = v; body.classList.toggle('editing', v);
+  editBtn.textContent = v ? 'Done' : 'Edit'; editBtn.setAttribute('aria-pressed', String(v));
+  render();
+}
+editBtn.addEventListener('click', () => setEditing(!editing));
+
+let suppressClick = false;
+grid.addEventListener('click', e => {
+  if (suppressClick){ e.preventDefault(); return; }
+  const rm = e.target.closest('.rm'); if (rm){ e.preventDefault(); remove(+rm.dataset.i); return; }
+  if (e.target.closest('.add')){ openSheet(-1); return; }
+  const t = e.target.closest('.tile'); if (t && editing) openSheet(+t.dataset.i);
+});
+grid.addEventListener('keydown', e => {
+  if (editing && (e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('tile')){ e.preventDefault(); openSheet(+e.target.dataset.i); }
+});
+grid.addEventListener('contextmenu', e => { if (editing) e.preventDefault(); });
+
+/* drag to reorder (edit mode) */
+let drag = null, ghost = null, rects = null;
+grid.addEventListener('pointerdown', e => {
+  if (!editing || e.button !== 0) return;
+  const t = e.target.closest('.tile'); if (!t || e.target.closest('.rm')) return;
+  drag = {i: +t.dataset.i, x: e.clientX, y: e.clientY, id: e.pointerId, on: false};
+});
+grid.addEventListener('pointermove', e => {
+  if (!drag || e.pointerId !== drag.id) return;
+  if (!drag.on){ if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 8) return; startDrag(); }
+  ghost.style.transform = `translate(${e.clientX}px,${e.clientY}px) translate(-50%,-50%) scale(1.1)`;
+  const j = slotAt(e.clientX, e.clientY); if (j < 0) return;
+  const to = Math.min(j, state.links.length - 1);
+  if (to !== drag.i){
+    const [it] = state.links.splice(drag.i, 1); state.links.splice(to, 0, it); drag.i = to;
+    render(); markPh();
+  }
+});
+function endDrag(e){
+  if (!drag || e.pointerId !== drag.id) return;
+  if (drag.on){
+    suppressClick = true; setTimeout(() => suppressClick = false, 350);
+    ghost.remove(); ghost = null;
+    try{ grid.releasePointerCapture(drag.id); }catch(err){}
+    save(); render();
+  }
+  drag = null;
+}
+grid.addEventListener('pointerup', endDrag);
+grid.addEventListener('pointercancel', endDrag);
+function startDrag(){
+  drag.on = true;
+  try{ grid.setPointerCapture(drag.id); }catch(err){}
+  rects = [...grid.children].map(c => c.getBoundingClientRect());
+  const ic = grid.children[drag.i].querySelector('.ic');
+  ghost = document.createElement('div'); ghost.className = 'ghost'; ghost.innerHTML = ic.outerHTML;
+  body.appendChild(ghost); markPh();
+}
+function markPh(){ const t = grid.children[drag.i]; if (t) t.classList.add('ph'); }
+function slotAt(x, y){
+  for (let k = 0; k < rects.length; k++){ const r = rects[k]; if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return k; }
+  return -1;
+}
+
+/* ---------- remove + undo ---------- */
+let undo = null;
+function remove(i){
+  const [l] = state.links.splice(i, 1); if (!l) return;
+  undo = {l, i, icon: getIcon(l.id)}; setIcon(l.id, null); save(); render();
+  snack(`Removed ${l.name}`, 'Undo', () => {
+    if (!undo) return;
+    state.links.splice(Math.min(undo.i, state.links.length), 0, undo.l);
+    if (undo.icon) setIcon(undo.l.id, undo.icon);
+    undo = null; save(); render();
+  });
+}
+
+/* ---------- snackbar ----------
+   #snack is a popover, so it sits in the top layer above open sheets; a browser without popovers gets a
+   plain fixed box (class "on"). One message at a time, five seconds, with an optional action. */
+const snackEl = $('#snack'), snackMsg = $('#snackMsg'), snackBtn = $('#snackBtn');
+const POP = typeof snackEl.showPopover === 'function';
+let snackFn = null, snackT = 0;
+function snack(msg, action, fn){
+  snackMsg.textContent = msg; snackBtn.hidden = !action; snackBtn.textContent = action || ''; snackFn = fn || null;
+  if (POP){ if (!snackEl.matches(':popover-open')) try{ snackEl.showPopover(); }catch(e){} } else snackEl.classList.add('on');
+  clearTimeout(snackT); snackT = setTimeout(hideSnack, 5000);
+}
+function hideSnack(){ if (POP){ try{ snackEl.hidePopover(); }catch(e){} } else snackEl.classList.remove('on'); snackFn = null; }
+snackBtn.addEventListener('click', () => { const f = snackFn; hideSnack(); if (f) f(); });
+const toast = m => snack(m);
+
+/* ---------- icons: fetch, compose, store ---------- */
+/* Providers are tried in order. A provider that allows cross-origin reads lets the icon be
+   composed and SAVED on the phone. If every provider refuses (CORS) while online, the icon is
+   shown straight from the web instead and the browser's cache keeps it. */
+const PROVIDERS = [
+  h => `https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&url=https://${h}&size=128`,
+  h => `https://icons.duckduckgo.com/ip3/${h}.ico`,
+  h => `https://icon.horse/icon/${h}`,
+  h => `https://favicone.com/${h}?s=128`,
+  h => `https://unavatar.io/${h}?fallback=false`,
+  h => `https://www.google.com/s2/favicons?domain=${h}&sz=128`,
+];
+const REMOTE = h => `https://www.google.com/s2/favicons?domain=${h}&sz=128`;
+async function fetchIcon(host){
+  if (!host) return null;
+  let blocked = false;
+  for (const p of PROVIDERS){
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 7000);
+    try{
+      const r = await fetch(p(host), {mode:'cors', signal: ctl.signal, referrerPolicy:'no-referrer'});
+      clearTimeout(t);
+      if (!r.ok) continue;
+      const b = await r.blob();
+      if (b.size < 80 || !/^image\//.test(b.type)) continue;
+      const img = await blobToImg(b);
+      if ((img.naturalWidth || 0) < 24 && !/svg/.test(b.type)) continue;   /* generic 16px placeholders */
+      const out = compose(img); if (out) return {data: out};
+    }catch(e){ clearTimeout(t); if (e && e.name !== 'AbortError') blocked = true; }
+  }
+  if (blocked && navigator.onLine !== false) return {remote: REMOTE(host)};
+  return null;
+}
+function blobToImg(b){
+  return new Promise((res, rej) => {
+    const u = URL.createObjectURL(b), i = new Image();
+    i.onload = () => { URL.revokeObjectURL(u); res(i); };
+    i.onerror = () => { URL.revokeObjectURL(u); rej(new Error('decode')); };
+    i.src = u;
+  });
+}
+function rgb2hsl(r, g, b){
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2; let h = 0, s = 0;
+  if (mx !== mn){
+    const d = mx - mn; s = l > .5 ? d / (2 - mx - mn) : d / (mx + mn);
+    h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; h *= 60;
+  }
+  return [h, s, l];
+}
+/* Turns any favicon/image into a 128px "app icon": full-bleed if it is already a solid square,
+   otherwise centred on a tile tinted from the image's own dominant hue. */
+function compose(img){
+  const S = 128, iw = img.naturalWidth || 128, ih = img.naturalHeight || 128, n = 24;
+  const sc = document.createElement('canvas'); sc.width = sc.height = n;
+  const sx = sc.getContext('2d', {willReadFrequently: true});
+  sx.drawImage(img, 0, 0, n, n);
+  let d; try{ d = sx.getImageData(0, 0, n, n).data; }catch(e){ return null; }
+  const bins = new Float64Array(12), br = new Float64Array(12), bg = new Float64Array(12), bb = new Float64Array(12);
+  let opaque = 0, lsum = 0, lw = 0;
+  for (let i = 0; i < d.length; i += 4){
+    const a = d[i + 3] / 255; if (a > .8) opaque++; if (a < .2) continue;
+    const r = d[i] / 255, g = d[i + 1] / 255, b = d[i + 2] / 255, [h, s, l] = rgb2hsl(r, g, b);
+    lsum += l * a; lw += a;
+    const w = a * (s + .04), k = Math.floor(h / 30) % 12;
+    bins[k] += w; br[k] += r * w; bg[k] += g * w; bb[k] += b * w;
+  }
+  let best = 0; for (let k = 1; k < 12; k++) if (bins[k] > bins[best]) best = k;
+  let H = 0, Sat = 0;
+  if (bins[best] > 0){ const [h, s] = rgb2hsl(br[best] / bins[best], bg[best] / bins[best], bb[best] / bins[best]); H = Math.round(h); Sat = s; }
+  const L = lw ? lsum / lw : .5, full = opaque / (n * n) >= .9;
+  const c = document.createElement('canvas'); c.width = c.height = S; const x = c.getContext('2d');
+  x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high';
+  if (full){
+    const s = Math.max(S / iw, S / ih), w = iw * s, h = ih * s; x.drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
+  } else {
+    x.fillStyle = L < .72 ? `hsl(${H} ${Math.round(Math.min(Sat, .6) * 100)}% 88%)` : `hsl(${H} ${Math.round(Math.min(Sat, .45) * 100)}% 22%)`;
+    x.fillRect(0, 0, S, S);
+    const box = S * .6, s = Math.min(box / iw, box / ih), w = iw * s, h = ih * s; x.drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
+  }
+  let out = c.toDataURL('image/webp', .88); if (!out.startsWith('data:image/webp')) out = c.toDataURL('image/png');
+  return out;
+}
+function fileToIcon(file){ return blobToImg(file).then(compose); }
+async function autoFetch(id){
+  const l0 = state.links.find(x => x.id === id); if (!l0 || l0.noicon) return;
+  const res = await fetchIcon(hostOf(l0.url));
+  const l = state.links.find(x => x.id === id); if (!l || l.noicon) return;
+  if (res && res.data){ setIcon(l.id, res.data); delete l.remote; delete l.tried; }
+  else if (res && res.remote && !getIcon(l.id)){ l.remote = res.remote; delete l.tried; }
+  else { l.tried = Date.now(); save(); return; }          /* nothing found: retry at most once a day */
+  save(); if (!drag) render();
+}
+/* pages added while offline (or whose icon failed) get another quiet attempt at load */
+async function retryMissing(){
+  if (navigator.onLine === false) return;
+  const day = 864e5, todo = state.links.filter(l => !l.noicon && !l.remote && !getIcon(l.id) && !(l.tried && Date.now() - l.tried < day));
+  for (const l of todo) await autoFetch(l.id);
+}
+
+/* ---------- add / edit sheet ----------
+   cur: index of the link being edited (-1 = adding). pend: the icon choice until Save,
+   {icon: data URL, remote: URL, noicon, changed}. finding is bumped to drop icon searches that
+   finish after the sheet moved on. */
+const sheet = $('#sheet'), form = $('#form'), urlIn = $('#url'), nameIn = $('#name'), urlErr = $('#urlErr'),
+      prev = $('#prev'), status = $('#status'), saveBtn = $('#saveBtn'), removeBtn = $('#removeBtn'), fileIn = $('#file');
+let cur = -1, pend = null, lastSuggest = '', finding = 0;
+
+function openSheet(i){
+  cur = i; finding++;
+  const l = i >= 0 ? state.links[i] : null;
+  $('#sheetTitle').textContent = l ? 'Edit page' : 'Add page';
+  saveBtn.textContent = l ? 'Save changes' : 'Add page';
+  removeBtn.hidden = !l;
+  urlIn.value = l ? l.url : ''; nameIn.value = l ? l.name : ''; lastSuggest = ''; urlErr.textContent = '';
+  pend = {icon: l && !l.noicon ? getIcon(l.id) : null, remote: l && !l.noicon ? l.remote : null, noicon: !!(l && l.noicon), changed: false};
+  status.textContent = !l ? 'The icon is found automatically after you save.'
+    : (!pend.icon && pend.remote) ? 'This icon loads from the web; your browser keeps a cached copy.' : '';
+  drawPrev(); sheet.showModal();
+  if (!l) setTimeout(() => urlIn.focus(), 50);
+}
+function drawPrev(){
+  const url = normalizeUrl(urlIn.value) || '', host = hostOf(url), nm = nameIn.value.trim() || nameFrom(host);
+  prev.innerHTML = pend.noicon ? monoHTML(nm, url)
+    : pend.icon ? `<span class="ic"><img alt="" src="${pend.icon}" draggable="false"></span>`
+    : pend.remote ? `<span class="ic remote"><img alt="" src="${esc(pend.remote)}" referrerpolicy="no-referrer" draggable="false"></span>`
+    : monoHTML(nm, url);
+}
+urlIn.addEventListener('input', () => {
+  urlErr.textContent = '';
+  const host = hostOf(normalizeUrl(urlIn.value) || ''), sug = nameFrom(host);
+  if (nameIn.value.trim() === '' || nameIn.value === lastSuggest){ nameIn.value = sug; lastSuggest = sug; }
+  if (!pend.icon && !pend.remote) drawPrev();
+});
+nameIn.addEventListener('input', () => { if ((!pend.icon && !pend.remote) || pend.noicon) drawPrev(); });
+
+$('#findBtn').addEventListener('click', async () => {
+  const u = normalizeUrl(urlIn.value); if (!u){ urlErr.textContent = 'Enter a web address first, like example.com'; urlIn.focus(); return; }
+  const my = ++finding; status.textContent = 'Looking for an icon…';
+  const res = await fetchIcon(hostOf(u)); if (my !== finding) return;
+  if (res && res.data){ pend = {icon: res.data, remote: null, noicon: false, changed: true}; status.textContent = 'Icon found and saved on this phone.'; }
+  else if (res && res.remote){ pend = {icon: null, remote: res.remote, noicon: false, changed: true}; status.textContent = 'Icon found. It loads from the web; your browser keeps a cached copy.'; }
+  else status.textContent = navigator.onLine === false ? 'No internet connection. The first letter will be used for now.' : 'No icon found online. The first letter will be used, or choose an image.';
+  drawPrev();
+});
+$('#imgBtn').addEventListener('click', () => fileIn.click());
+fileIn.addEventListener('change', async () => {
+  const f = fileIn.files[0]; fileIn.value = ''; if (!f) return;
+  try{ const d = await fileToIcon(f); if (!d) throw 0; pend = {icon: d, remote: null, noicon: false, changed: true}; status.textContent = 'Image ready.'; }
+  catch(e){ status.textContent = 'That image couldn’t be read. Try a PNG or JPG.'; }
+  drawPrev();
+});
+$('#letterBtn').addEventListener('click', () => { pend = {icon: null, remote: null, noicon: true, changed: true}; status.textContent = 'The first letter of the name will be used.'; drawPrev(); });
+$('#cancelBtn').addEventListener('click', () => sheet.close());
+removeBtn.addEventListener('click', () => { sheet.close(); if (cur >= 0) remove(cur); });
+sheet.addEventListener('close', () => { finding++; pend = null; });
+
+form.addEventListener('submit', e => {
+  e.preventDefault();
+  const url = normalizeUrl(urlIn.value);
+  if (!url){ urlErr.textContent = 'Enter a web address like example.com'; urlIn.focus(); return; }
+  const host = hostOf(url), name = (nameIn.value.trim() || nameFrom(host) || host).slice(0, 40);
+  let l;
+  if (cur < 0){
+    if (state.links.length >= SLOTS){ sheet.close(); toast(`All ${SLOTS} slots are full. Remove a page first.`); return; }
+    l = {id: uid(), name, url, noicon: pend.noicon};
+    if (!pend.noicon){ if (pend.icon) setIcon(l.id, pend.icon); else if (pend.remote) l.remote = pend.remote; }
+    state.links.push(l);
+  } else {
+    l = state.links[cur];
+    const hostChanged = hostOf(l.url) !== host;
+    l.name = name; l.url = url; l.noicon = pend.noicon;
+    if (pend.changed){ setIcon(l.id, pend.noicon ? null : pend.icon); l.remote = (!pend.noicon && !pend.icon && pend.remote) || undefined; }
+    else if (hostChanged && !l.noicon){ setIcon(l.id, null); l.remote = undefined; }
+  }
+  if (!l.noicon) delete l.noicon; if (!l.remote) delete l.remote; delete l.tried;
+  save(); render(); sheet.close();
+  if (!l.noicon && !l.remote && !getIcon(l.id)) autoFetch(l.id);
+});
+
+/* ---------- settings ----------
+   applyPrefs() applies the theme, icon shape and layout and colours the browser bar (theme-color, a
+   literal copy of --bg). The pre-paint script in <head> repeats the first part so the page never flashes. */
+const settings = $('#settings');
+function applyPrefs(){
+  const r = document.documentElement;
+  if (state.theme === 'system') r.removeAttribute('data-theme'); else r.dataset.theme = state.theme;
+  r.dataset.shape = state.shape; r.dataset.fill = state.fill;
+  const dark = state.theme === 'dark' || (state.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+  $('#themeColor').content = dark ? '#000000' : '#F0F1F4';
+  for (const b of $('#shapes').children) b.setAttribute('aria-pressed', String(b.dataset.shape === state.shape));
+  for (const b of $('#themes').children) b.setAttribute('aria-pressed', String(b.dataset.theme === state.theme));
+  for (const b of $('#fills').children) b.setAttribute('aria-pressed', String(b.dataset.fill === state.fill));
+}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyPrefs);
+$('#shapes').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; state.shape = b.dataset.shape; save(); applyPrefs(); });
+$('#themes').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; state.theme = b.dataset.theme; save(); applyPrefs(); });
+$('#fills').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; state.fill = b.dataset.fill; save(); applyPrefs(); render(); });
+$('#gear').addEventListener('click', () => {
+  $('#addr').value = location.href;
+  $('#keyIn').value = nKeyPath; $('#keyErr').textContent = ''; kArmed = false; clearTimeout(kArmT); $('#keyNew').textContent = 'Create a new key';
+  $('#slots').textContent = `${state.links.length} of ${SLOTS} slots used.`;
+  resetArmed = false; $('#resetBtn').textContent = 'Remove all pages';
+  settings.showModal();
+});
+$('#setClose').addEventListener('click', () => settings.close());
+$('#copyBtn').addEventListener('click', async () => {
+  const a = $('#addr'); a.select();
+  try{ await navigator.clipboard.writeText(a.value); toast('Address copied.'); }
+  catch(e){ try{ document.execCommand('copy'); toast('Address copied.'); }catch(err){ toast('Long-press the address to copy it.'); } }
+});
+$('#refreshBtn').addEventListener('click', async e => {
+  const b = e.currentTarget, todo = state.links.filter(l => !l.noicon); if (!todo.length) return;
+  b.disabled = true; let n = 0, ok = 0;
+  for (const l of todo){
+    b.textContent = `Refreshing ${++n} of ${todo.length}…`;
+    const res = await fetchIcon(hostOf(l.url)); if (!res) continue;
+    if (res.data){ setIcon(l.id, res.data); delete l.remote; ok++; }
+    else if (res.remote && !getIcon(l.id)){ l.remote = res.remote; ok++; }
+  }
+  b.disabled = false; b.textContent = 'Refresh all icons'; save(); render();
+  toast(ok ? `Updated ${ok} icon${ok === 1 ? '' : 's'}.` : 'No icons could be fetched right now.');
+});
+$('#exportBtn').addEventListener('click', () => {
+  const data = {v: 1, app: 'drawer', exported: new Date().toISOString(), shape: state.shape, theme: state.theme, fill: state.fill,
+    links: state.links.map(l => Object.assign({}, l, {icon: getIcon(l.id) || undefined}))};
+  const blob = new Blob([JSON.stringify(data)], {type: 'application/json'}), u = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = u; a.download = 'home-backup.json'; body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 3000);
+});
+$('#importBtn').addEventListener('click', () => $('#importFile').click());
+$('#importFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try{
+    const d = JSON.parse(await f.text()); if (!d || !Array.isArray(d.links)) throw 0;
+    for (const l of state.links) setIcon(l.id, null);
+    state.links = d.links.slice(0, SLOTS).map(l => {
+      const id = String(l.id || uid()), url = normalizeUrl(String(l.url || ''));
+      if (url && l.icon) setIcon(id, l.icon);
+      const o = {id, url, name: String(l.name || nameFrom(hostOf(url || ''))).slice(0, 40)};
+      if (l.noicon) o.noicon = true; if (typeof l.remote === 'string' && /^https:/.test(l.remote)) o.remote = l.remote;
+      return o;
+    }).filter(l => l.url);
+    if (SHAPES.includes(d.shape)) state.shape = d.shape; if (THEMES.includes(d.theme)) state.theme = d.theme; if (FILLS.includes(d.fill)) state.fill = d.fill;
+    save(); applyPrefs(); render(); settings.close(); toast(`Imported ${state.links.length} page${state.links.length === 1 ? '' : 's'}.`);
+  }catch(err){ toast('That file isn’t a backup from this page.'); }
+});
+let resetArmed = false, resetT = 0;
+$('#resetBtn').addEventListener('click', e => {
+  const b = e.currentTarget;
+  if (!resetArmed){ resetArmed = true; b.textContent = 'Tap again to remove everything'; clearTimeout(resetT); resetT = setTimeout(() => { resetArmed = false; b.textContent = 'Remove all pages'; }, 3500); return; }
+  for (const l of state.links) setIcon(l.id, null);
+  state.links = []; save(); render(); settings.close(); setEditing(false); toast('All pages removed.');
+});
+
+/* ---------- notes: one shared list of notes and files, kept in Firebase Realtime Database ---------- */
+/* Talks to Firebase's REST API directly, so no extra library is loaded: a live stream (EventSource) of the
+   list while the sheet is open, and plain requests to send, edit and delete. Everything lives under
+   NROOT = NOTES_DB/s/<shared key>. A file's contents are stored apart from the list (under /blobs) and
+   only downloaded when tapped. A note or a file can be encrypted on this device before upload (AES-256-GCM,
+   with the key made from a passphrase by PBKDF2-SHA-256); the derived key, not the passphrase, can be
+   kept in IndexedDB. A copy of the list stays on this device so it opens instantly and can still be read
+   offline. Data model, requests, security rules and the exact encryption format: FIREBASE and ENCRYPTION
+   in the comment at the top of the file.
+   Flow: the stream (or a send) changes nData -> nKeep() saves the copy -> nRender() redraws the whole list,
+   header and bottom bar from nData + nOut, then nNames() decrypts the names and texts the key here opens. */
+const NK = 'drawer.notes', NSK = 'drawer.notes.key', NLK = 'drawer.notes.last', NEK = 'drawer.notes.encrypt', NRK = 'drawer.notes.remember', NPK = 'drawer.notes.pass';
+const NMAX = 7e6;   /* largest file, 7 MB: keeps every stored value under the database's 10 MB limit */
+const NBASE = (() => { let s = String(NOTES_DB || '').trim().replace(/\/+$/, ''); if (s && !/^https?:\/\//i.test(s)) s = 'https://' + s; return s; })();
+const NCRYPTO = !!(window.isSecureContext && window.crypto && crypto.subtle);
+const NSHARE = !!(navigator.share && navigator.canShare);   /* the system share sheet (Android, iOS, some desktops) */
+const SV = {'.sv': 'timestamp'}, TE = new TextEncoder(), TD = new TextDecoder();
+const nSheet = $('#notes'), nList = $('#msgs'), nStat = $('#nstat'), nTitle = $('#notesTitle'), nIn = $('#noteIn'), nSendB = $('#sendBtn'),
+      nSelB = $('#selBtn'), nAllB = $('#allBtn'), nKeyB = $('#keyBtn'), nCloseB = $('#notesClose'), nComp = $('#composer'), nBar = $('#selbar'),
+      nDel = $('#delBtn'), nFileIn = $('#fileIn'), nAttach = $('#attachBtn'), nStage = $('#stage'), nLockB = $('#lockBtn'), nPasteB = $('#pasteBtn'),
+      nBtn = $('#notesBtn'), nEditBar = $('#editbar');
+const nFine = matchMedia('(hover: hover) and (pointer: fine)');   /* a mouse or trackpad is present: Enter sends, long-press isn't needed */
+const nRel = new Intl.RelativeTimeFormat([], {numeric: 'auto'});
+const NSZ = ['byte', 'kilobyte', 'megabyte'].map(unit => new Intl.NumberFormat([], {style: 'unit', unit, maximumFractionDigits: 1}));
+const nSize = n => n < 1e3 ? NSZ[0].format(n) : n < 1e6 ? NSZ[1].format(n / 1e3) : NSZ[2].format(n / 1e6);
+const nExt = name => { const m = /\.([a-z0-9]{1,5})$/i.exec(name || ''); return m ? m[1].toUpperCase() : 'FILE'; };
+const NLOCK = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="11" width="15" height="10" rx="2.5"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg>';
+const OFFLINE = 'Offline. Showing the notes this device saw last.';
+/* nData: id -> note, as in the database. nSeen: a list was ever loaded here. nLive: the first event of the
+   current stream arrived (it stays true while the browser retries the stream by itself). nProbed: nDiagnose
+   already ran for this connection attempt. nOut: items still sending (shown greyed). nES: the EventSource.
+   nRetry/nWait: reconnect timer and delay. nKind: what the status line shows ('' info, 'conn' connection
+   problem, 'act' a failed send, edit or delete). nStick: keep the list scrolled to the newest note. nSel: Set
+   of selected ids while selecting, else null. nArmed/nArmT: Delete is waiting for its second tap. nStaged:
+   {file} waiting in the composer. nPass: the passphrase typed this visit ('' = none; the stored key may still
+   be there, see nReady). nGen: bumped when it changes, so a late result is recomputed with the new one.
+   nNaming: nNames() is running (its awaited loop must not overlap). nEnc: the lock button. nEditId: the
+   note in the text field, waiting for Save. nPendDel: a deletion waiting out its Undo window. */
+let nData = {}, nSeen = false, nLive = false, nProbed = false, nOut = [], nES = null, nRetry = 0, nWait = 0, nKind = '', nStick = true;
+let nSel = null, nArmed = false, nArmT = 0, nStaged = null, nPass = '', nGen = 0, nNaming = false, nEnc = false, nEditId = null, nPendDel = null;
+/* nKeys: salt -> promise of the AES key (from the passphrase, or loaded from the key store); nMeta: id -> what an
+   encrypted note hides ({n, y} for a file, {x: text} for a note), or false when the key here can't open it;
+   nGot: id -> a file's contents already on this device; nBusy: id -> what a file says while downloading */
+const nKeys = new Map(), nMeta = new Map(), nGot = new Map(), nBusy = new Map();
+try{ const d = JSON.parse(localStorage.getItem(NK)); if (d && typeof d === 'object'){ nData = d; nSeen = true; } }catch(e){}
+try{ nEnc = localStorage.getItem(NEK) === '1'; }catch(e){}
+function nKeep(){ nSeen = true; try{ localStorage.setItem(NK, JSON.stringify(nData)); }catch(e){} }
+/* kind: '' quiet status, 'conn' connection problem, 'act' a send, edit or delete that failed */
+function nState(msg, kind){ nStat.textContent = msg || ''; nKind = msg ? kind || '' : ''; nStat.classList.toggle('bad', !!(msg && kind)); }
+const nWhy = err => err instanceof TypeError ? 'couldn’t reach the database' : (err && err.message) || 'unknown error';
+async function nFail(r){ const j = await r.json().catch(() => null); return new Error((j && j.error) || 'error ' + r.status); }
+function nXErr(x){ let j = null; try{ j = JSON.parse(x.responseText); }catch(e){} return new Error((j && j.error) || 'error ' + x.status); }
+/* XMLHttpRequest rather than fetch where progress matters: uploading and downloading files */
+function nXhr(method, url, body, onProg, guess){
+  return new Promise((res, rej) => {
+    const x = new XMLHttpRequest();
+    x.open(method, url);
+    if (onProg) (body ? x.upload : x).onprogress = e => { const all = e.lengthComputable ? e.total : guess; if (all) onProg(Math.min(e.loaded / all, 1)); };
+    x.onload = () => res(x);
+    x.onerror = () => rej(new TypeError('network'));
+    x.send(body || null);
+  });
+}
+
+/* ---- shared key ----
+   NROOT is the database path everything lives under: NBASE/s/<key>. It stays empty until a key is saved in
+   Settings > Notes, and the composer is disabled meanwhile. */
+let nKeyPath = '', NROOT = '';
+try{ nKeyPath = localStorage.getItem(NSK) || ''; }catch(e){}
+const nKeyOk = k => /^[A-Za-z0-9_-]{16,64}$/.test(k);
+function nRoot(){ NROOT = NBASE && nKeyOk(nKeyPath) ? `${NBASE}/s/${nKeyPath}` : ''; nIn.disabled = nAttach.disabled = !NROOT; }
+function nSetKey(k){   /* a different key is a different list: drop everything seen under the old one */
+  nKeyPath = k;
+  try{ if (k) localStorage.setItem(NSK, k); else localStorage.removeItem(NSK); localStorage.removeItem(NK); localStorage.removeItem(NLK); }catch(e){}
+  nFlushDel(); nDrop(); nData = {}; nSeen = false; nOut = []; nMeta.clear(); nGot.clear(); nBusy.clear(); nDot(false);
+  nRoot(); nRender(); if (nSheet.open) nConnect();
+}
+function nNewKey(){   /* 24 characters of A-Z a-z 0-9, each byte below 248 so the modulo is unbiased */
+  const a = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'; let k = '';
+  while (k.length < 24) for (const x of crypto.getRandomValues(new Uint8Array(48))) if (x < 248 && k.length < 24) k += a[x % 62];
+  return k;
+}
+const kIn = $('#keyIn'), kErr = $('#keyErr');
+let kArmed = false, kArmT = 0;
+$('#keySave').addEventListener('click', () => {
+  const v = kIn.value.trim(); kErr.textContent = '';
+  if (!nKeyOk(v)){ kErr.textContent = 'A key is 16 to 64 letters, digits, - or _.'; kIn.focus(); return; }
+  if (v !== nKeyPath) nSetKey(v);
+  toast('Key saved.');
+});
+$('#keyNew').addEventListener('click', e => {
+  const b = e.currentTarget;
+  if (nKeyPath && !kArmed){ kArmed = true; b.textContent = 'Tap again to replace the key'; clearTimeout(kArmT); kArmT = setTimeout(() => { kArmed = false; b.textContent = 'Create a new key'; }, 3500); return; }
+  kArmed = false; clearTimeout(kArmT); b.textContent = 'Create a new key';
+  const k = nNewKey(); kIn.value = k; kErr.textContent = ''; nSetKey(k);
+  toast('New key created. Enter it on your other devices.');
+});
+$('#keyCopy').addEventListener('click', async () => {
+  if (!nKeyPath){ toast('No key yet.'); return; }
+  try{ await navigator.clipboard.writeText(nKeyPath); toast('Key copied.'); }catch(e){ kIn.select(); toast('Long-press the key to copy it.'); }
+});
+
+/* ---- stream ---- */
+/* apply one streamed change: 'put' replaces the data at path, 'patch' merges the given children */
+function nApply(path, data, merge){
+  const segs = path.split('/').filter(Boolean);
+  if (merge){ if (data && typeof data === 'object') for (const k in data) nPut(segs.concat(k.split('/').filter(Boolean)), data[k]); }
+  else if (segs.length) nPut(segs, data);
+  else nData = data && typeof data === 'object' ? Object.assign({}, data) : {};
+}
+function nPut(segs, val){
+  if (!segs.length) return;
+  const id = segs[0];
+  if (segs.length === 1){ if (val == null) delete nData[id]; else nData[id] = val; return; }
+  const item = Object.assign({}, nData[id]); let o = item;
+  for (let i = 1; i < segs.length - 1; i++) o = o[segs[i]] = Object.assign({}, o[segs[i]]);
+  const last = segs[segs.length - 1];
+  if (val == null) delete o[last]; else o[last] = val;
+  nData[id] = item;
+}
+function nConnect(){
+  if (!NROOT || nES || document.hidden || !nSheet.open) return;
+  clearTimeout(nRetry); nProbed = false;
+  const es = nES = new EventSource(NROOT + '/notes.json');
+  const on = (type, merge) => es.addEventListener(type, e => {
+    let m = null; try{ m = JSON.parse(e.data); }catch(err){}
+    if (!m || typeof m.path !== 'string') return;
+    const prev = nData; nData = Object.assign({}, nData);
+    nApply(m.path, m.data, merge); nStale(prev); nLive = true; nWait = 0; nKeep(); nLastSeen(); nRender();
+    if (nKind !== 'act') nState('');
+  });
+  on('put', false); on('patch', true);
+  es.addEventListener('cancel', () => { nDrop(); nState('The database stopped sharing notes. Check its rules and the key.', 'conn'); });
+  es.addEventListener('error', () => {
+    if (es !== nES) return;
+    if (es.readyState === EventSource.CLOSED){ nDrop(); nDiagnose(true); return; }
+    if (nKind) return;                                   /* keep a real error on screen */
+    if (navigator.onLine === false){ nState(OFFLINE); return; }
+    nState('Reconnecting…');
+    if (!nLive && !nProbed){ nProbed = true; nDiagnose(false); }   /* never connected: find out why, once */
+  });
+}
+function nDrop(){ clearTimeout(nRetry); if (nES){ nES.close(); nES = null; } nLive = false; }
+/* a note changed on another device: forget what was decrypted from its old contents */
+function nStale(prev){ for (const id of [...nMeta.keys()]){ const o = prev[id], n = nData[id]; if (!n || (o && (o.ct !== n.ct || o.meta !== n.meta || o.s !== n.s))) nMeta.delete(id); } }
+/* ask the database directly, so a wrong address, key or rule shows a real reason; after a closed stream the
+   answer also decides whether to try again (only when it was ok) */
+async function nDiagnose(closed){
+  let msg;
+  try{
+    const r = await fetch(NROOT + '/notes.json?shallow=true', {cache: 'no-store'});
+    if (r.ok){
+      if (closed){ nWait = Math.min((nWait || 2000) * 2, 60000); nState('Reconnecting…'); nRetry = setTimeout(nConnect, nWait); }
+      return;
+    }
+    msg = `Couldn’t load notes: ${(await nFail(r)).message}.`;
+  }catch(e){
+    msg = navigator.onLine === false ? OFFLINE : 'Couldn’t reach the notes database. Check the connection, the address in NOTES_DB and the key in Settings.';
+  }
+  if (nSheet.open && nKind !== 'act') nState(msg, msg === OFFLINE ? '' : 'conn');
+}
+
+/* ---- encryption ----
+   Format 1. Stored notes depend on every detail here: read ENCRYPTION at the top of the file before
+   changing anything, and add a new format (enc: 2) rather than editing this one. */
+const b64 = u => { if (u.toBase64) return u.toBase64(); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+const unb64 = s => { if (Uint8Array.fromBase64) return Uint8Array.fromBase64(s); const b = atob(s), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; };
+let nSaltP = null;   /* this database's salt; every encrypted note also stores the salt it used */
+const nSalt = () => nSaltP || (nSaltP = crypto.subtle.digest('SHA-256', TE.encode('drawer.notes.v1|' + NBASE)).then(h => b64(new Uint8Array(h, 0, 16))));
+const nDerive = (pass, salt) => crypto.subtle.importKey('raw', TE.encode(pass.normalize('NFC')), 'PBKDF2', false, ['deriveKey'])
+  .then(k => crypto.subtle.deriveKey({name: 'PBKDF2', hash: 'SHA-256', salt: unb64(salt), iterations: 600000}, k, {name: 'AES-GCM', length: 256}, false, ['encrypt', 'decrypt']));
+/* the key for a salt: cached (derived this visit, or loaded from the key store), else derived from the passphrase */
+function nKey(salt){ let k = nKeys.get(salt); if (!k){ if (!nPass) return Promise.reject(new Error('no passphrase')); k = nDerive(nPass, salt); nKeys.set(salt, k); } return k; }
+const nReady = () => !!nPass || nKeys.size > 0;   /* something on this device can open encrypted notes */
+const nHasKey = salt => !!nPass || nKeys.has(salt);   /* ...and can seal for this salt (a kept key belongs to its salt) */
+const nCanSeal = async () => nHasKey(await nSalt());
+/* sealed = 12-byte nonce + ciphertext + tag; aad ties it to its note, so contents can't be swapped between notes */
+async function nSeal(key, data, aad){
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({name: 'AES-GCM', iv, additionalData: TE.encode(aad)}, key, data));
+  const out = new Uint8Array(12 + ct.length); out.set(iv); out.set(ct, 12); return out;
+}
+const nUnseal = (key, data, aad) => crypto.subtle.decrypt({name: 'AES-GCM', iv: data.subarray(0, 12), additionalData: TE.encode(aad)}, key, data.subarray(12));
+/* what an encrypted note hides: {x: text} for a note, {n: file name, y: MIME type} for a file */
+async function nOpen(key, id){
+  const v = nData[id];
+  if (typeof v.ct === 'string') return {x: TD.decode(await nUnseal(key, unb64(v.ct), 't:' + id)).slice(0, 4000)};
+  const o = JSON.parse(TD.decode(await nUnseal(key, unb64(String(v.meta)), 'n:' + id)));
+  return {n: String(o.n || 'file').slice(0, 200), y: String(o.y || '').slice(0, 100)};
+}
+/* a note's hidden part (a plain file: its name and type); null while nothing here can open it, false when the
+   key here can't */
+async function nMetaOf(id){
+  const v = nData[id]; if (!v || (v.enc && v.enc !== 1)) return null;   /* an unknown format stays closed */
+  if (!v.enc) return {n: String(v.name || 'file'), y: String(v.type || '')};
+  if (nMeta.has(id)) return nMeta.get(id);
+  if (!nReady() || !NCRYPTO) return null;
+  const gen = nGen; let m = false;
+  try{ m = await nOpen(await nKey(String(v.s)), id); }catch(e){}
+  if (gen !== nGen) return nMetaOf(id);
+  nMeta.set(id, m); return m;
+}
+async function nNames(){   /* reveal what the key here opens: file names and note texts */
+  if (nNaming || !nReady() || !NCRYPTO) return;
+  nNaming = true; let changed = false;
+  try{ for (const id of Object.keys(nData)) if (nData[id] && nData[id].enc === 1 && !nMeta.has(id)){ await nMetaOf(id); changed = true; } }
+  finally{ nNaming = false; }
+  if (changed) nRender();
+}
+
+/* ---- key storage ----
+   With "Keep the key on this device" ticked, the derived AES keys (one per salt) go into IndexedDB as
+   non-extractable CryptoKeys and come back into nKeys at the next load; the passphrase is kept nowhere.
+   nIdb runs fn on the "keys" store and resolves with the result(s) of the request(s) fn returns. */
+function nIdb(mode, fn){
+  return new Promise((res, rej) => {
+    if (!window.indexedDB) return rej(new Error('no IndexedDB'));
+    const o = indexedDB.open('drawer.notes', 1);
+    o.onupgradeneeded = () => o.result.createObjectStore('keys');
+    o.onerror = () => rej(o.error);
+    o.onsuccess = () => {
+      const db = o.result, tx = db.transaction('keys', mode), out = fn(tx.objectStore('keys'));
+      tx.oncomplete = () => { db.close(); res(Array.isArray(out) ? out.map(q => q.result) : out && out.result); };
+      tx.onerror = () => { db.close(); rej(tx.error); };
+    };
+  });
+}
+async function nLoadKeys(){
+  try{
+    const [salts, keys] = await nIdb('readonly', st => [st.getAllKeys(), st.getAll()]);
+    salts.forEach((s, i) => { if (!nKeys.has(s)) nKeys.set(s, Promise.resolve(keys[i])); });
+    if (salts.length) nRender();
+  }catch(e){}
+}
+/* a new passphrase (or none): forget every key and decrypted copy, then keep the new keys if asked to */
+async function nSetPass(pass, remember, keys){
+  nPass = pass; const gen = ++nGen; nKeys.clear(); nMeta.clear();
+  if (keys) for (const [s, k] of keys) nKeys.set(s, k);
+  for (const id of [...nGot.keys()]) if (nData[id] && nData[id].enc === 1) nGot.delete(id);   /* drop decrypted copies */
+  const forget = () => { try{ localStorage.removeItem(NPK); }catch(e){} };   /* the legacy plain-text passphrase */
+  try{ if (pass) localStorage.setItem(NRK, remember ? '1' : '0'); }catch(e){}   /* Forget keeps the preference */
+  nRender();
+  if (!pass || !remember){ forget(); nIdb('readwrite', st => st.clear()).catch(() => {}); return; }
+  const list = [];
+  try{ const salt = await nSalt(); list.push([salt, await nKey(salt)]); }catch(e){}
+  for (const [s, k] of nKeys) if (!list.some(x => x[0] === s)) try{ list.push([s, await k]); }catch(e){}
+  if (gen !== nGen) return;   /* changed again meanwhile */
+  nIdb('readwrite', st => { st.clear(); for (const [s, k] of list) st.put(k, s); }).then(forget).catch(() => {});   /* kept until it is safely stored */
+}
+
+/* ---- the list ---- */
+function nItems(){
+  const a = [];
+  for (const id in nData){
+    const v = nData[id]; if (!v || typeof v !== 'object') continue;
+    const t = Math.min(Math.max(+v.t || 0, 0), 8.64e15), enc = v.enc === 1, bad = !!v.enc && !enc;   /* bad: a format this page doesn't know */
+    if (typeof v.text === 'string') a.push({id, t, text: v.text});
+    else if (typeof v.ct === 'string') a.push({id, t, ct: true, enc, bad});
+    else if (typeof v.size === 'number') a.push({id, t, file: true, size: v.size, enc, bad, name: String(v.name || 'file')});
+  }
+  a.sort((x, y) => x.t - y.t || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
+  return a.concat(nOut.filter(p => !nData[p.id]));       /* items still sending go last */
+}
+function nDay(t){
+  const d = new Date(t), a = new Date(t), b = new Date(); a.setHours(0, 0, 0, 0); b.setHours(0, 0, 0, 0);
+  const diff = Math.round((b - a) / 864e5);
+  if (diff === 0 || diff === 1) return nRel.format(-diff || 0, 'day');
+  return d.toLocaleDateString([], {weekday: 'long', day: 'numeric', month: 'long', year: d.getFullYear() === b.getFullYear() ? undefined : 'numeric'});
+}
+/* note text goes in as plain text (never as HTML); web addresses become links */
+const NLINK = /\b(?:https?:\/\/|www\.)[^\s<>"]+/gi;
+function nText(el, s){
+  let at = 0;
+  for (const m of s.matchAll(NLINK)){
+    let u = m[0];
+    while (/[.,;:!?'")\]}>]$/.test(u) && !(u.endsWith(')') && u.split('(').length >= u.split(')').length)) u = u.slice(0, -1);
+    if (!/^(?:https?:\/\/|www\.)\S/i.test(u)) continue;
+    if (m.index > at) el.append(s.slice(at, m.index));
+    const a = document.createElement('a');
+    a.href = /^www\./i.test(u) ? 'https://' + u : u; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = u;
+    el.append(a); at = m.index + u.length;
+  }
+  if (at < s.length) el.append(s.slice(at));
+}
+/* the text a note shows, if this device can read it */
+function nTextOf(id){ const v = nData[id]; if (!v) return null; if (typeof v.text === 'string') return v.text; const m = nMeta.get(id); return m && typeof m.x === 'string' ? m.x : null; }
+function nFileBub(it){   /* a file, or an encrypted note this device can't read yet */
+  const m = it.bad ? null : it.enc && !it.pending ? nMeta.get(it.id) : {n: it.name}, busy = nBusy.get(it.id), got = nGot.has(it.id);
+  const b = document.createElement('button'), ic = document.createElement('span'), meta = document.createElement('span'),
+        nm = document.createElement('span'), sub = document.createElement('span');
+  b.type = 'button'; b.className = 'bub fbub'; ic.className = 'fic'; nm.className = 'fname';
+  if (it.ct){   /* a locked note */
+    ic.innerHTML = NLOCK; nm.textContent = it.bad ? 'Note in a newer format' : 'Encrypted note';
+    sub.className = 'fsub';
+    sub.textContent = it.bad ? 'Needs a newer version of this page' : m === false ? 'Needs a different passphrase' : nReady() ? 'Encrypted' : 'Needs the passphrase';
+  } else {
+    if (m) ic.textContent = nExt(m.n); else ic.innerHTML = NLOCK;
+    nm.textContent = m ? m.n : it.bad ? 'File in a newer format' : 'Encrypted file';
+    sub.className = busy && busy.err ? 'fsub bad' : 'fsub';
+    sub.textContent = it.pending ? it.msg : busy ? busy.msg
+      : nSize(it.size) + (it.bad ? ' · Needs a newer version of this page' : got ? (NSHARE ? ' · Tap to share' : ' · Saved')
+        : !it.enc ? '' : m === false ? ' · Needs a different passphrase' : m || nReady() ? ' · Encrypted' : ' · Needs the passphrase');
+  }
+  meta.className = 'fmeta'; meta.append(nm, sub); b.append(ic, meta);
+  return b;
+}
+function nRender(toEnd){
+  const items = nItems(), stored = items.filter(i => !i.pending), frag = document.createDocumentFragment();
+  if (nSel){ const ids = new Set(stored.map(i => i.id)); for (const id of nSel) if (!ids.has(id)) nSel.delete(id); if (!stored.length) nSel = null; }
+  if (!items.length){
+    const li = document.createElement('li'); li.className = 'nempty';
+    li.textContent = !NBASE ? 'Notes aren’t connected yet. Put your Firebase database address in NOTES_DB at the top of the script in index.html.'
+      : !NROOT ? 'Enter the shared key in Settings > Notes, or create one there on your first device.'
+      : nLive || nSeen ? 'No notes yet. Notes and files you send here show up on every device that has the same key.'
+      : 'Loading notes…';
+    frag.append(li);
+  }
+  let day = '';
+  for (const it of items){
+    const dl = nDay(it.t);
+    if (dl !== day){ day = dl; const d = document.createElement('li'); d.className = 'day'; d.textContent = dl; frag.append(d); }
+    const li = document.createElement('li'), tick = document.createElement('span'), col = document.createElement('div'), tm = document.createElement('time');
+    const open = it.ct && !it.pending ? nMeta.get(it.id) : null;   /* a decrypted note reads like a plain one */
+    let b, kind;
+    if (it.file){ b = nFileBub(it); kind = 'file'; }
+    else if (it.ct && !(open && typeof open.x === 'string')){ b = nFileBub(it); kind = 'lock'; }
+    else { b = document.createElement('div'); b.className = 'bub'; nText(b, it.text != null ? it.text : open.x); kind = 'text'; }
+    li.className = it.pending ? 'msg pending' : 'msg'; li.dataset.id = it.id; li.dataset.kind = kind; if (it.bad) li.classList.add('bad');
+    tick.className = 'tick'; tick.setAttribute('aria-hidden', 'true');
+    col.className = 'mcol'; tm.className = 'mt';
+    tm.dateTime = new Date(it.t).toISOString();
+    if (it.enc && !it.pending){ const l = document.createElement('span'); l.innerHTML = NLOCK; l.setAttribute('aria-label', 'Encrypted'); tm.append(l); }
+    tm.append(it.pending ? 'Sending…' : new Date(it.t).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'}));
+    if (nSel && !it.pending){
+      li.setAttribute('role', 'checkbox'); li.setAttribute('aria-checked', String(nSel.has(it.id))); li.tabIndex = 0;
+      for (const el of [b, ...b.querySelectorAll('a')]) if (el.matches('a, button')) el.tabIndex = -1;
+    }
+    col.append(b, tm); li.append(tick, col); frag.append(li);
+  }
+  nList.replaceChildren(frag); nList.classList.toggle('blank', !items.length);
+  /* the header and bottom bar follow the mode: writing, or selecting notes to delete */
+  const k = nSel ? nSel.size : 0;
+  nSheet.classList.toggle('selecting', !!nSel);
+  nTitle.textContent = !nSel ? 'Notes' : k ? `${k} selected` : 'Select notes';
+  nSelB.textContent = nSel ? 'Cancel' : 'Select';
+  nSelB.disabled = !NROOT || (!nSel && !stored.length);
+  nAllB.hidden = !nSel; nAllB.textContent = nSel && k === stored.length ? 'None' : 'All';
+  nKeyB.hidden = !!nSel || !NCRYPTO || !(nReady() || items.some(i => i.enc));
+  nCloseB.hidden = !!nSel; nComp.hidden = !!nSel; nBar.hidden = !nSel;
+  nDel.disabled = !k; if (!nArmed) nDel.textContent = k ? `Delete ${k}` : 'Delete';
+  if (toEnd || nStick) nList.scrollTop = nList.scrollHeight;
+  nNames();
+}
+/* update one file's status line without rebuilding the list (progress) */
+function nProg(id, msg){ const el = nList.querySelector(`.msg[data-id="${CSS.escape(id)}"] .fsub`); if (el){ el.textContent = msg; el.classList.remove('bad'); } }
+
+/* ---- sending ---- */
+function nInput(){
+  if (nSheet.open && !nComp.hidden){ nIn.style.height = 'auto'; nIn.style.height = Math.min(nIn.scrollHeight + 2, 148) + 'px'; }
+  nSendB.disabled = !NROOT || (!nIn.value.trim() && !nStaged);
+  nPasteB.hidden = !NPASTE || !!nIn.value || !!nStaged;   /* the text field needs the room while something is in it */
+}
+function nLockSet(on){ nEnc = !!on && NCRYPTO; nLockB.setAttribute('aria-pressed', String(nEnc)); try{ localStorage.setItem(NEK, nEnc ? '1' : '0'); }catch(e){} }
+function nStageSet(file){   /* the file waiting in the composer, shown above the text field */
+  nStaged = file ? {file} : null;
+  nStage.hidden = !nStaged;
+  if (file){ $('#stageIc').textContent = nExt(file.name); $('#stageName').textContent = file.name || 'file'; $('#stageSize').textContent = nSize(file.size); }
+  nInput();
+}
+async function nSend(){
+  if (!NROOT) return;
+  const st = nStaged, text = nIn.value.trim(), edit = nEditId;
+  if (!st && !text) return;
+  const enc = edit ? !!(nData[edit] && nData[edit].enc === 1) : nEnc;   /* an edited note keeps its own state */
+  const can = !enc || (edit ? nHasKey(String(nData[edit].s)) : await nCanSeal());
+  if (!can && !await nAskPass({})) return;
+  if (nStaged !== st || nEditId !== edit) return;      /* the composer changed while the passphrase sheet was open */
+  if (edit){ nEditSet(null); nIn.value = ''; nInput(); if (text) nPostEdit(edit, text); return; }
+  if (text){ nIn.value = ''; nInput(); nPostText(text, enc); }
+  if (st){ nStageSet(null); nPostFile(st, enc); }
+}
+async function nPostText(text, enc){
+  const p = {id: uid(), text, t: Date.now(), pending: true, enc: !!enc}, root = NROOT;
+  nOut.push(p); nRender(true);
+  try{
+    let item = {text, t: SV};
+    if (enc){ const salt = await nSalt(), key = await nKey(salt); item = {t: SV, enc: 1, s: salt, ct: b64(await nSeal(key, TE.encode(text), 't:' + p.id))}; nMeta.set(p.id, {x: text}); }
+    const r = await fetch(`${root}/notes/${p.id}.json`, {method: 'PUT', body: JSON.stringify(item)});
+    if (!r.ok) throw await nFail(r);
+    if (NROOT !== root) return;   /* the key changed meanwhile: this note belongs to the old list */
+    if (!nData[p.id]) nData[p.id] = Object.assign({}, item, {t: p.t});     /* the live stream swaps in the server's copy */
+    nKeep(); nLastSeen(); if (nKind === 'act') nState('');
+  }catch(err){
+    nMeta.delete(p.id);
+    if (!nIn.value.trim()){ nIn.value = text; nInput(); }
+    nState(navigator.onLine === false ? 'You’re offline, so the note wasn’t sent.' : `The note wasn’t sent (${nWhy(err)}). Try again.`, 'act');
+  }
+  nOut = nOut.filter(x => x !== p); nRender();
+}
+async function nPostFile(st, enc){
+  const file = st.file, id = uid(), name = (file.name || 'file').slice(-200), type = (file.type || '').slice(0, 100), root = NROOT;
+  const p = {id, file: true, name, size: file.size, enc, t: Date.now(), pending: true, msg: enc ? 'Encrypting…' : 'Preparing…'};
+  nOut.push(p); nRender(true);
+  try{
+    let data = new Uint8Array(await file.arrayBuffer()), item;
+    if (enc){
+      const salt = await nSalt(), key = await nKey(salt);
+      item = {t: SV, size: file.size, enc: 1, s: salt, meta: b64(await nSeal(key, TE.encode(JSON.stringify({n: name, y: type})), 'n:' + id))};
+      data = await nSeal(key, data, 'f:' + id);
+      nMeta.set(id, {n: name, y: type});
+    } else { item = {t: SV, name, size: file.size}; if (type) item.type = type; }
+    /* one request writes the list entry and the contents together, so neither can exist without the other */
+    const body = new Blob([`{"notes/${id}":`, JSON.stringify(item), `,"blobs/${id}":"`, b64(data), '"}']);
+    data = null;
+    const x = await nXhr('PATCH', root + '/.json', body, f => { p.msg = `Uploading ${Math.round(f * 100)}%`; nProg(id, p.msg); });
+    if (x.status < 200 || x.status > 299) throw nXErr(x);
+    if (NROOT !== root) return;   /* the key changed meanwhile */
+    if (!nData[id]) nData[id] = Object.assign({}, item, {t: p.t});
+    nGot.set(id, file);   /* tapping it on this device shares it without downloading, until Notes is closed */
+    nKeep(); nLastSeen(); if (nKind === 'act') nState('');
+  }catch(err){
+    nMeta.delete(id);
+    if (!nStaged) nStageSet(file);   /* back in the composer, ready to try again */
+    nState(navigator.onLine === false ? `You’re offline, so ${name} wasn’t sent.` : `${name} wasn’t sent (${nWhy(err)}). Try again.`, 'act');
+  }
+  nOut = nOut.filter(x => x !== p); nRender();
+}
+/* a changed note: {text}, or {ct} re-sealed with the note's own key; t stays, so it keeps its place */
+async function nPostEdit(id, text){
+  const v = nData[id], root = NROOT;
+  if (!v){ nState('That note was deleted meanwhile.', 'act'); if (!nIn.value.trim()){ nIn.value = text; nInput(); } return; }
+  try{
+    let body = {text};
+    if (v.enc === 1){ const key = await nKey(String(v.s)); body = {ct: b64(await nSeal(key, TE.encode(text), 't:' + id))}; }
+    const r = await fetch(`${root}/notes/${id}.json`, {method: 'PATCH', body: JSON.stringify(body)});
+    if (!r.ok) throw await nFail(r);
+    if (NROOT !== root) return;
+    if (nData[id]){ nData[id] = Object.assign({}, nData[id], body); if (v.enc === 1) nMeta.set(id, {x: text}); }
+    nKeep(); nRender(); if (nKind === 'act') nState('');
+  }catch(err){
+    nState(navigator.onLine === false ? 'You’re offline, so the change wasn’t saved.' : `The change wasn’t saved (${nWhy(err)}). Try again.`, 'act');
+    if (!nIn.value.trim() && nData[id]) nEditStart(id, text);   /* back into the text field */
+  }
+}
+
+/* ---- downloading ---- */
+function nSave(blob, name){
+  const u = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = u; a.download = name || 'file'; a.hidden = true;
+  nSheet.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 60000);
+}
+async function nShare(blob, m){   /* a second tap on a saved file: the system share sheet, where there is one */
+  const f = new File([blob], m.n || 'file', {type: m.y || 'application/octet-stream'});
+  if (NSHARE && navigator.canShare({files: [f]})){ try{ await navigator.share({files: [f], title: f.name}); }catch(e){} return; }
+  nSave(blob, m.n);
+}
+async function nGet(id){
+  const v = nData[id], was = nBusy.get(id);
+  if (!v || (v.enc && v.enc !== 1) || (was && !was.err)) return;   /* a format this page doesn't know stays closed */
+  let m = await nMetaOf(id);
+  if (!m){   /* encrypted, and no key here opens it yet */
+    if (!NCRYPTO || !await nAskPass({target: id})) return;
+    m = await nMetaOf(id); if (!m) return;
+  }
+  if (nGot.has(id)) return nShare(nGot.get(id), m);
+  const enc = v.enc === 1, busy = {msg: 'Downloading…'};
+  nBusy.set(id, busy); nRender();
+  try{
+    const guess = 4 * Math.ceil(((+v.size || 0) + (enc ? 28 : 0)) / 3) + 2;
+    const x = await nXhr('GET', `${NROOT}/blobs/${encodeURIComponent(id)}.json`, null, f => { busy.msg = `Downloading ${Math.min(99, Math.round(f * 100))}%`; nProg(id, busy.msg); }, guess);
+    if (x.status !== 200) throw nXErr(x);
+    const s = JSON.parse(x.responseText);
+    if (typeof s !== 'string') throw new Error('its contents are missing');
+    let data = unb64(s);
+    if (enc){ busy.msg = 'Decrypting…'; nProg(id, busy.msg); data = await nUnseal(await nKey(String(v.s)), data, 'f:' + id); }
+    const blob = new Blob([data], {type: m.y || 'application/octet-stream'});
+    nBusy.delete(id); nGot.set(id, blob); nRender();
+    nSave(blob, m.n);
+  }catch(err){
+    nBusy.set(id, {err: true, msg: err && err.name === 'OperationError' ? 'Couldn’t decrypt it; the stored copy is damaged.'
+      : navigator.onLine === false ? 'Offline. Tap to try again.' : `Couldn’t download it (${nWhy(err)}). Tap to try again.`});
+    nRender();
+  }
+}
+
+/* ---- selecting and deleting ----
+   Delete takes the items out of the list at once but sends the write five seconds later, so Undo on the
+   snackbar can put them back; closing Notes, hiding the page or leaving it sends it straight away. */
+function nSelect(on){ nSel = on ? new Set() : null; nDisarm(); nRender(); }
+function nToggle(id){ if (!nSel) return; if (nSel.has(id)) nSel.delete(id); else nSel.add(id); nDisarm(); nRender(); }
+function nDisarm(){ nArmed = false; clearTimeout(nArmT); nDel.classList.remove('arm'); const k = nSel ? nSel.size : 0; nDel.textContent = k ? `Delete ${k}` : 'Delete'; }
+function nFlushDel(){ const d = nPendDel; if (!d) return; nPendDel = null; clearTimeout(d.timer); if (snackFn === d.undo) hideSnack(); nSendDel(d); }
+async function nSendDel(d){
+  try{
+    const r = await fetch(d.root + '/.json', {method: 'PATCH', body: JSON.stringify(d.body), keepalive: true});
+    if (!r.ok) throw await nFail(r);
+    if (NROOT !== d.root) return;
+    for (const id of d.ids){ nGot.delete(id); nMeta.delete(id); nBusy.delete(id); }
+    nKeep(); if (nKind === 'act') nState('');
+  }catch(err){
+    if (NROOT !== d.root) return;   /* the key changed meanwhile: nothing to put back here */
+    for (const id of d.ids) if (d.before[id] && !nData[id]) nData[id] = d.before[id];
+    nKeep(); nRender();
+    const msg = navigator.onLine === false ? 'You’re offline, so nothing was deleted.' : `Couldn’t delete (${nWhy(err)}). Try again.`;
+    if (nSheet.open) nState(msg, 'act'); else toast('The notes weren’t deleted; they’re back.');
+  }
+}
+nSelB.addEventListener('click', () => nSelect(!nSel));
+nAllB.addEventListener('click', () => {
+  if (!nSel) return;
+  const ids = nItems().filter(i => !i.pending).map(i => i.id);
+  nSel = new Set(nSel.size === ids.length ? [] : ids); nDisarm(); nRender();
+});
+nSheet.addEventListener('cancel', e => { if (nSel){ e.preventDefault(); nSelect(false); } });   /* Back or Esc leaves selecting first */
+nDel.addEventListener('click', () => {
+  if (!nSel || !nSel.size) return;
+  if (!nArmed){ nArmed = true; nDel.textContent = `Tap again to delete ${nSel.size}`; nDel.classList.add('arm'); clearTimeout(nArmT); nArmT = setTimeout(nDisarm, 3500); return; }
+  nFlushDel();   /* an earlier deletion still waiting goes out now */
+  const ids = [...nSel], body = {}, before = {};
+  for (const id of ids){ before[id] = nData[id]; body['notes/' + id] = null; body['blobs/' + id] = null; delete nData[id]; }   /* a null at a missing path is free */
+  nSelect(false); nKeep();
+  const d = nPendDel = {ids, body, before, root: NROOT, timer: setTimeout(nFlushDel, 5000)};
+  d.undo = () => {
+    if (nPendDel !== d) return;
+    nPendDel = null; clearTimeout(d.timer);
+    for (const id of ids) if (before[id] && !nData[id]) nData[id] = before[id];
+    nKeep(); nRender();
+  };
+  snack(`Deleted ${ids.length}`, 'Undo', d.undo);
+});
+
+/* ---- passphrase sheet ---- */
+const pSheet = $('#passSheet'), pForm = $('#passForm'), pIntro = $('#passIntro'), pHave = $('#passHave'), pEntry = $('#passEntry'),
+      pIn = $('#passIn'), p2Wrap = $('#pass2Wrap'), p2In = $('#pass2In'), pErr = $('#passErr'), pRem = $('#passRemember'),
+      pSave = $('#passSave'), pCancel = $('#passCancel');
+let pDone = null, pTarget = null, pAnyway = false;
+/* encrypted notes to check a passphrase against: all of them, or just the note being opened */
+function pProbe(){
+  if (pTarget) return nData[pTarget] ? [pTarget] : [];
+  const out = [];
+  for (const id in nData){ const v = nData[id]; if (v && v.enc === 1 && (typeof v.meta === 'string' || typeof v.ct === 'string')) out.push(id); }
+  return out;
+}
+/* the keys this passphrase makes, if it opens one of these notes: one derivation per salt (at most three salts),
+   every note of that salt tried, so an older note made with another passphrase doesn't hide a match */
+async function pTry(pass, ids){
+  const keys = new Map(), bySalt = new Map();
+  for (const id of ids){ const v = nData[id]; if (!v) continue; const s = String(v.s); if (!bySalt.has(s)) bySalt.set(s, []); bySalt.get(s).push(id); }
+  for (const [s, list] of bySalt){
+    const k = nDerive(pass, s); keys.set(s, k);
+    for (const id of list){ try{ await nOpen(await k, id); return keys; }catch(e){} }
+    if (keys.size >= 3) break;
+  }
+  return null;
+}
+function pShowForm(change){
+  const check = change !== true && pProbe().length > 0;   /* nothing to check against: type it twice instead */
+  pHave.hidden = true; pEntry.hidden = false; pAnyway = change === true;
+  pIn.value = p2In.value = ''; pErr.textContent = ''; p2Wrap.hidden = check;
+  pIntro.textContent = pTarget ? 'Enter the passphrase this was encrypted with.'
+    : change === true ? 'Notes you encrypt from now on will use the new passphrase. Notes encrypted before keep needing the one they were made with.'
+    : check ? 'Enter the passphrase used for the encrypted notes here.'
+    : 'Notes and files you choose to encrypt are locked on this device before they’re uploaded, so the database only holds them scrambled (their sizes and dates still show). Use the same passphrase on your other devices. If it’s forgotten, nobody can open them.';
+  pCancel.textContent = 'Cancel';
+  setTimeout(() => pIn.focus(), 50);
+}
+function nAskPass(o){   /* resolves true once a passphrase is saved, false if the sheet is closed */
+  return new Promise(res => {
+    if (pDone) pDone(false);
+    pDone = res; pTarget = o.target || null;
+    let rem = '1'; try{ rem = localStorage.getItem(NRK) || '1'; }catch(e){} pRem.checked = rem !== '0';
+    if (o.manage && nReady()){
+      pHave.hidden = false; pEntry.hidden = true; pCancel.textContent = 'Close';
+      pIntro.textContent = 'Encrypted notes open on this device without asking.';
+    } else pShowForm();
+    if (!pSheet.open) pSheet.showModal();
+  });
+}
+pForm.addEventListener('submit', async e => {
+  e.preventDefault();
+  if (pSave.disabled) return;
+  const pass = pIn.value, target = pTarget;
+  pErr.textContent = '';
+  if (pass.length < 8){ pErr.textContent = 'Use at least 8 characters. A few unrelated words work well.'; pIn.focus(); return; }
+  if (!p2Wrap.hidden && p2In.value !== pass){ pErr.textContent = 'The two passphrases don’t match.'; p2In.focus(); return; }
+  let keys = null;
+  const probe = pAnyway ? [] : pProbe();
+  if (probe.length){
+    pSave.disabled = true; pSave.textContent = 'Checking…';
+    keys = await pTry(pass, probe);
+    pSave.disabled = false; pSave.textContent = 'Save passphrase';
+    if (!pSheet.open || pTarget !== target || pIn.value !== pass) return;   /* the sheet moved on meanwhile */
+    if (!keys){
+      if (pTarget){ pErr.textContent = 'That passphrase doesn’t open this.'; pIn.select(); return; }
+      pAnyway = true; p2Wrap.hidden = false; p2In.value = '';
+      pErr.textContent = 'That doesn’t open the encrypted notes already here. To use it for new notes anyway, type it again to confirm.';
+      p2In.focus(); return;
+    }
+  }
+  nSetPass(pass, pRem.checked, keys);
+  const f = pDone; pDone = null; pSheet.close(); if (f) f(true);
+});
+pSheet.addEventListener('close', () => { pIn.value = p2In.value = ''; const f = pDone; pDone = null; pTarget = null; if (f) f(false); });
+pCancel.addEventListener('click', () => pSheet.close());
+$('#passChange').addEventListener('click', () => pShowForm(true));
+$('#passForget').addEventListener('click', () => { nSetPass('', false); pSheet.close(); });
+nKeyB.addEventListener('click', () => nAskPass({manage: true}));
+
+/* ---- composer, copying and editing ----
+   A tap on a note copies it; holding it for half a second puts it in the text field, where Send becomes Save
+   (#editbar shows meanwhile); the clipboard button sends what was copied as a note. */
+nAttach.addEventListener('click', () => nFileIn.click());
+nFileIn.addEventListener('change', () => {
+  const f = nFileIn.files[0]; nFileIn.value = '';
+  if (!f) return;
+  if (f.size > NMAX){ nState(`${f.name} is ${nSize(f.size)}. Files can be up to ${nSize(NMAX)}.`, 'act'); return; }
+  if (nKind === 'act') nState('');
+  nStageSet(f);
+});
+$('#unstageBtn').addEventListener('click', () => nStageSet(null));
+nLockB.addEventListener('click', async () => {
+  const on = !nEnc;
+  if (on && !await nCanSeal() && !await nAskPass({})) return;
+  nLockSet(on);
+});
+nPasteB.addEventListener('click', async () => {
+  if (!NROOT) return;
+  let t = '';
+  try{ t = (await navigator.clipboard.readText()).trim().slice(0, 4000); }catch(e){ toast('Couldn’t read the clipboard.'); return; }
+  if (!t){ toast('The clipboard is empty.'); return; }
+  if (nEnc && !await nCanSeal() && !await nAskPass({})) return;
+  nPostText(t, nEnc);
+});
+function nEditStart(id, text){
+  nEditId = id; nIn.value = text != null ? text : (nTextOf(id) || ''); nEditBar.hidden = false; nSendB.setAttribute('aria-label', 'Save');
+  nInput(); nIn.focus(); nIn.setSelectionRange(nIn.value.length, nIn.value.length);
+}
+function nEditSet(v){ if (v) return nEditStart(v); nEditId = null; nEditBar.hidden = true; nSendB.setAttribute('aria-label', 'Send'); }
+$('#editCancel').addEventListener('click', () => { nEditSet(null); nIn.value = ''; nInput(); });
+async function nCopy(text){ try{ await navigator.clipboard.writeText(text); toast('Copied.'); }catch(e){ toast('Couldn’t copy.'); } }
+let nHold = null, nHeld = false;   /* a finger resting on a note: {x, y, timer}; nHeld: the hold fired, so swallow the click that follows */
+function nHoldEnd(){ if (nHold){ clearTimeout(nHold.timer); nHold = null; } }
+nList.addEventListener('pointerdown', e => {
+  nHeld = false; nHoldEnd();
+  const li = e.target.closest('.msg');
+  if (nSel || !e.isPrimary || e.button !== 0 || !li || li.dataset.kind !== 'text' || li.classList.contains('pending') || !e.target.closest('.bub')) return;
+  nHold = {x: e.clientX, y: e.clientY, timer: setTimeout(() => {
+    nHold = null; nHeld = true;
+    if (navigator.vibrate) navigator.vibrate(15);
+    if (nIn.value.trim() && nEditId !== li.dataset.id){ toast('Send or clear the text field first.'); return; }   /* don't lose a draft */
+    nEditStart(li.dataset.id);
+  }, 500)};
+});
+nList.addEventListener('pointermove', e => { if (nHold && Math.hypot(e.clientX - nHold.x, e.clientY - nHold.y) > 8) nHoldEnd(); });
+nList.addEventListener('pointerup', nHoldEnd);
+nList.addEventListener('pointercancel', nHoldEnd);
+nList.addEventListener('contextmenu', e => { if (!nFine.matches && e.target.closest('.msg[data-kind="text"] .bub')) e.preventDefault(); });
+nList.addEventListener('click', e => {
+  const li = e.target.closest('.msg');
+  if (nSel){ e.preventDefault(); if (li && li.hasAttribute('role')) nToggle(li.dataset.id); return; }
+  if (nHeld){ nHeld = false; e.preventDefault(); return; }
+  if (!li || li.classList.contains('pending') || e.target.closest('a')) return;
+  const id = li.dataset.id, kind = li.dataset.kind;
+  if (kind === 'file') nGet(id);
+  else if (kind === 'lock'){ if (NCRYPTO && !li.classList.contains('bad')) nAskPass({target: id}); }
+  else if (kind === 'text' && e.target.closest('.bub')){ const t = nTextOf(id); if (t != null) nCopy(t); }
+});
+nList.addEventListener('keydown', e => {
+  const li = nSel && (e.key === ' ' || e.key === 'Enter') && e.target.closest('.msg[role="checkbox"]');
+  if (!li) return;
+  e.preventDefault(); const id = li.dataset.id; nToggle(id);
+  const again = nList.querySelector(`.msg[data-id="${CSS.escape(id)}"]`); if (again) again.focus();
+});
+nBtn.addEventListener('click', () => {
+  nSel = null; nDisarm(); nDot(false);
+  nSheet.showModal(); nStick = true; nState(''); nLockSet(nEnc); nInput(); nRender(true); nConnect(); nLastSeen();
+  if (NROOT && nFine.matches) nIn.focus();
+});
+nCloseB.addEventListener('click', () => nSheet.close());
+nSheet.addEventListener('close', () => { nFlushDel(); nDrop(); nSel = null; nDisarm(); nGot.clear(); });
+nComp.addEventListener('submit', e => { e.preventDefault(); nSend(); });
+nIn.addEventListener('input', nInput);
+nIn.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || e.isComposing) return;
+  if (e.ctrlKey || e.metaKey || (nFine.matches && !e.shiftKey)){ e.preventDefault(); nSend(); }
+});
+nList.addEventListener('scroll', () => { nHoldEnd(); nStick = nList.scrollHeight - nList.scrollTop - nList.clientHeight < 80; }, {passive: true});
+new ResizeObserver(() => { if (nStick) nList.scrollTop = nList.scrollHeight; }).observe(nList);
+document.addEventListener('visibilitychange', () => { if (document.hidden){ nFlushDel(); nDrop(); } else { nConnect(); nPeek(); } });
+addEventListener('pagehide', nFlushDel);
+addEventListener('online', () => { nConnect(); nPeek(); });
+nLockB.disabled = !NCRYPTO;
+const NPASTE = !!(navigator.clipboard && navigator.clipboard.readText);
+nRoot();
+
+/* ---- new-note dot ----
+   drawer.notes.last is the newest id seen while Notes was open ("0", which sorts before every id, when the
+   list was empty). At load, when the page comes back and when the connection returns, one tiny request asks
+   the database for its newest id (ids sort by time), and the Notes button gets a dot when that is newer.
+   Nothing is asked until Notes has been opened here once with the stream connected. */
+function nDot(on){ nBtn.classList.toggle('dot', on); nBtn.setAttribute('aria-label', on ? 'Notes, new note' : 'Notes'); }
+function nLastSeen(){ if (!nSheet.open) return; let m = ''; for (const id in nData) if (id > m) m = id; if (m || nLive) try{ localStorage.setItem(NLK, m || '0'); }catch(e){} }
+async function nPeek(){
+  if (!NROOT || document.hidden || nSheet.open || navigator.onLine === false) return;
+  let last = ''; try{ last = localStorage.getItem(NLK) || ''; }catch(e){}
+  if (!last) return;
+  try{
+    const r = await fetch(NROOT + '/notes.json?orderBy=%22%24key%22&limitToLast=1', {cache: 'no-store'});
+    if (!r.ok) return;
+    const d = await r.json(), id = d && typeof d === 'object' ? Object.keys(d)[0] || '' : '';
+    if (!nSheet.open) nDot(id > last);
+  }catch(e){}
+}
+
+/* ---------- clock ---------- (runs again at the start of every minute) */
+const tEl = $('#time'), dEl = $('#date');
+function tick(){
+  const n = new Date();
+  tEl.textContent = n.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+  tEl.dateTime = n.toISOString();
+  dEl.textContent = n.toLocaleDateString([], {weekday: 'long', day: 'numeric', month: 'long'});
+  setTimeout(tick, 60000 - (n.getSeconds() * 1000 + n.getMilliseconds()) + 40);
+}
+
+/* ---------- boot ----------
+   retryMissing gives links whose icon wasn't found (e.g. added offline) another try once online.
+   Notes: a passphrase an earlier version kept in localStorage becomes a stored key once; otherwise the
+   stored keys are loaded, and the database is asked for its newest note (the dot). sw.js keeps a copy of
+   this page so it opens instantly and offline, and says "updated" when it fetched a newer one; the
+   snackbar then offers Reload. navigator.storage.persist() asks the browser not to evict this site's
+   storage when the device runs low. */
+applyPrefs(); render(); tick();
+setTimeout(retryMissing, 1200);
+addEventListener('online', retryMissing);
+let legacyPass = ''; try{ legacyPass = localStorage.getItem(NPK) || ''; }catch(e){}
+if (legacyPass && NCRYPTO) nSetPass(legacyPass, true); else nLoadKeys();
+nPeek();
+if ('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.addEventListener('message', e => { if (e.data === 'updated') snack('This page was updated.', 'Reload', () => location.reload()); });
+}
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+})();
+</script>
+</body>
+</html>
