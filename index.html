@@ -26,8 +26,10 @@
      Undo), drag to reorder. The clock makes way for three steppers (icon
      size, columns, rows), and "Sort A–Z" (with Undo) joins the bar under
      the grid.
-   - Bar under the grid: Notes (with a dot when a note arrived since Notes
-     was last open on this device), Settings, Edit.
+   - Bar under the grid: the connection icon (grey while it checks, green
+     when the internet answers, red when it doesn't; tap it to check now),
+     Notes (with a dot when a note arrived since Notes was last open on this
+     device), Settings, Edit.
    - Add/Edit sheet: web address, name (suggested from the address), icon
      (found online, chosen from an image, or the first letter on a colour).
    - Settings sheet: icon shape, layout, theme (system, dark, light), this
@@ -51,7 +53,8 @@
    HEAD     pre-paint script: applies the saved theme, icon shape and layout
             before the first paint, so the page's colours never flash (the
             browser bar colour follows once the main script runs).
-   STYLE    "design tokens" > "header" ("edit-mode tools") > "grid" >
+   STYLE    "design tokens" > "header" ("connection icon", "edit-mode
+            tools") > "grid" >
             "sheets" > "notes sheet" ("files", "selecting notes to delete",
             "composer", "passphrase sheet") > "snackbar"
    BODY     SVG clip paths > header (clock, #tools) > #hint > #grid >
@@ -63,7 +66,8 @@
             > "settings" > "notes" ("shared key", "stream", "encryption",
             "key storage", "the list", "sending", "downloading", "selecting
             and deleting", "passphrase sheet", "composer, copying and
-            editing", "new-note dot") > "clock" > "boot" (service worker)
+            editing", "new-note dot") > "connection" > "clock" > "boot"
+            (service worker)
 
  DATA KEPT ON EACH DEVICE
    Browser storage belongs to the whole site, which on GitHub Pages is
@@ -102,6 +106,7 @@
    the device could read it, but it cannot be turned back into the
    passphrase or used anywhere else.
    Cache "drawer.home-v1": a copy of this page, kept by sw.js.
+   The connection icon keeps nothing: its state lasts as long as the page.
    Renaming a key loses that data on every device: migrate it instead.
    Backup file (Settings > Export): {v: 1, app: "drawer", exported, shape,
    theme, fill, cols, rows, size, links: [link + its icon]}. Notes, the
@@ -286,7 +291,9 @@
    gesture and Esc close it ("cancel" event; Notes uses it to leave Select
    mode first). The snackbar is a popover, so it shows above open sheets.
    Colours are CSS variables on :root. The dark values appear twice (the
-   prefers-color-scheme block and [data-theme="dark"]): change both. The
+   prefers-color-scheme block and [data-theme="dark"]): change both. A
+   colour that carries a state (the connection icon's green and red) comes
+   with a change of shape, for eyes that can't tell the two apart. The
    page background is also a literal in the theme-color meta tag and in
    applyPrefs(), which colours the browser bar.
    The layout reaches the CSS as three variables that applyPrefs() sets on
@@ -322,6 +329,14 @@
      the first two (gstatic, DuckDuckGo) refuse cross-origin reads, so a
      lookup always counts as blocked, and a host none of the others know
      is shown straight from Google's service instead of as a letter.
+   Connection icon: what is asked (NET_URL), how long an answer may take
+     (NET_WAIT) and how often it is asked again (NET_EVERY while online;
+     NET_AGAIN after the first failure, then NET_RETRY) are at "connection"
+     in the script. NET_URL must stay on this page's own site: the check
+     reads the reply's address and Date header, which a reply from another
+     site hides. To remove the icon: the #netBtn button, the .net CSS and
+     the --ok colour, the "connection" section of the script, and
+     netCheck(true) under "boot".
    Remove notes: the #notesBtn button, the #notes and #passSheet dialogs,
      the Notes block in #settings, the notes CSS (including .ib.dot), the
      notes section of the script, the key lines in the gear handler under
@@ -342,8 +357,14 @@
    5. Close Notes on one device, send from the other: after a reload, or
       when the page comes back from the background, the Notes button on
       the first device shows a dot.
-   6. Turn on flight mode: the page still opens (service worker), the list
-      stays readable and sending says it's offline.
+   6. Turn on flight mode: the connection icon turns red at once, the page
+      still opens (service worker), the list stays readable and sending
+      says it's offline. Flight mode off: the icon goes grey, then green.
+      Tap it: grey, then "You're online." On Wi-Fi whose router has lost
+      its line (or with mobile data off and a hotspot without data), the
+      icon turns red within a minute and a tap says "No internet on this
+      connection."; green again within 15 seconds of the line coming back.
+      Leave the page for another app and come back: grey, then green.
    7. Settings: switch the theme, shape and layout; export, then import a
       backup. Commit a change: the next open offers "Reload".
    8. Edit: Sort A–Z, then Undo. Step the icon size, columns and rows up
@@ -392,6 +413,15 @@
      empty slot, the header or the bar under the grid.
    - The "Reload" offer after an update is a five-second snackbar; if it is
      missed, the open after that shows the new copy anyway.
+   - The connection icon asks this page's own server (GitHub Pages), so it
+     is red in the rare hours when GitHub is down while the rest of the
+     internet works, and on a connection too slow to answer in 8 seconds.
+     Between checks it can be up to a minute behind (15 seconds while
+     red). Each failed check leaves a "Failed to load resource" line in
+     the browser console; that is the browser's doing and harmless.
+     sw.js must let the check (HEAD sw.js?ping=...) through to the network
+     untouched: if it answered from a cache, dropped the "?ping=" part or
+     rebuilt the reply without its Date header, the icon would stay red.
 
  HISTORY
    Launcher: grid, icons, settings, backup.
@@ -410,6 +440,8 @@
                (Chrome was giving it touches from most of the icon) and
                shrinks with small icons. Labels go down to 10px in narrow
                slots. In Edit mode an empty slot scrolls the page.
+   2026-11-15  Connection icon beside Notes: grey while checking, green when
+               the internet answers, red when it doesn't.
 ==============================================================================
 -->
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
@@ -427,6 +459,7 @@ r.dataset.shape=(s&&s.shape)||'squircle';r.dataset.fill=(s&&s.fill==='top')?'top
    Light values here; dark values in the two blocks below (the system's dark mode unless Light was
    chosen in Settings, and Dark chosen in Settings). Keep the two dark blocks identical.
    --sock icon background · --line borders · --btn field background · --bub note bubbles
+   --ok the connection icon when the internet answers (it is --danger when not, --fg2 while checking)
    --cols, --rows, --scale the layout chosen in Edit mode (applyPrefs() sets them on the root element)
    --base icon size at 100%, scales with the screen width · --want the size asked for (--base x --scale)
    --floor the least an icon shrinks to so that the rows fit the screen (60% of --want, 28px at least)
@@ -435,7 +468,7 @@ r.dataset.shape=(s&&s.shape)||'squircle';r.dataset.fill=(s&&s.fill==='top')?'top
   color-scheme:light dark;
   --bg:#F0F1F4; --fg:#15161A; --fg2:#6A6E78; --sheet:#FFFFFF;
   --sock:rgba(0,0,0,.06); --line:rgba(0,0,0,.11); --btn:rgba(0,0,0,.05);
-  --danger:#C8423E; --shadow:0 14px 36px rgba(0,0,0,.22); --bub:rgba(0,0,0,.065);
+  --danger:#C8423E; --shadow:0 14px 36px rgba(0,0,0,.22); --bub:rgba(0,0,0,.065); --ok:#188038;
   --cols:4; --rows:5; --scale:1;
   --base:clamp(54px,15vw,66px); --want:calc(var(--base) * var(--scale)); --floor:max(28px, var(--want) * .6); --icon:var(--want);
   --font:system-ui,-apple-system,Roboto,"Segoe UI",sans-serif;
@@ -444,13 +477,13 @@ r.dataset.shape=(s&&s.shape)||'squircle';r.dataset.fill=(s&&s.fill==='top')?'top
   :root:not([data-theme="light"]){
     --bg:#000; --fg:#ECEAE4; --fg2:#8A8D93; --sheet:#17181B;
     --sock:rgba(255,255,255,.075); --line:rgba(255,255,255,.13); --btn:rgba(255,255,255,.08);
-    --danger:#E8635F; --shadow:0 14px 36px rgba(0,0,0,.65); --bub:rgba(255,255,255,.09);
+    --danger:#E8635F; --shadow:0 14px 36px rgba(0,0,0,.65); --bub:rgba(255,255,255,.09); --ok:#4CC36B;
   }
 }
 :root[data-theme="dark"]{
   --bg:#000; --fg:#ECEAE4; --fg2:#8A8D93; --sheet:#17181B;
   --sock:rgba(255,255,255,.075); --line:rgba(255,255,255,.13); --btn:rgba(255,255,255,.08);
-  --danger:#E8635F; --shadow:0 14px 36px rgba(0,0,0,.65); --bub:rgba(255,255,255,.09);
+  --danger:#E8635F; --shadow:0 14px 36px rgba(0,0,0,.65); --bub:rgba(255,255,255,.09); --ok:#4CC36B;
 }
 *{box-sizing:border-box}
 [hidden]{display:none!important}   /* the hidden attribute must beat the display:flex/grid rules below */
@@ -465,7 +498,7 @@ button{font-family:var(--font); cursor:pointer; touch-action:manipulation}
 :focus-visible{outline:2px solid var(--fg); outline-offset:2px}
 
 /* ---------- header ----------
-   The clock and date. The buttons (Notes, Settings, Edit) sit in .actions under the grid, in thumb reach;
+   The clock and date. The connection icon and the buttons (Notes, Settings, Edit) sit in .actions under the grid, in thumb reach;
    #hint moves under the grid too when it fills from the bottom (order: header 0, hint 1, grid 2, actions 4). */
 header{display:grid; padding:8px 6px 10px}
 header > *{grid-area:1/1; min-width:0}   /* the clock and the Edit-mode tools share one cell, so the header is as tall in both modes */
@@ -477,6 +510,16 @@ header > *{grid-area:1/1; min-width:0}   /* the clock and the Edit-mode tools sh
 .pill{padding:0 15px; font-size:13px; font-weight:500; min-width:66px}
 .ib{width:36px; display:grid; place-items:center; padding:0}
 .editing .pill{background:var(--fg); color:var(--bg); border-color:var(--fg)}
+/* connection icon: #netBtn, left of Notes. The script sets data-net to "checking" (grey, breathing), "online"
+   (green globe) or "offline" (red, and a crossed circle takes the globe's place, so the state never rests on
+   colour alone). No border: it reports, the buttons beside it act. A tap asks again. */
+.net{width:28px; border-color:transparent; color:var(--fg2); transition:color .15s}
+.net[data-net="online"]{color:var(--ok)}
+.net[data-net="offline"]{color:var(--danger)}
+.net .x,.net[data-net="offline"] .o{display:none}
+.net[data-net="offline"] .x{display:inline}
+.net[data-net="checking"] svg{animation:netwait .9s ease-in-out infinite alternate}
+@keyframes netwait{to{opacity:.35}}
 .hint{margin:0 6px 14px; color:var(--fg2); font-size:14px; line-height:1.45; max-width:34ch; order:1}
 [data-fill="bottom"] .hint{order:3; margin:14px 6px 0}
 /* edit-mode tools: three steppers in place of the clock, and "Sort A–Z" at the left of the bar under the grid.
@@ -719,7 +762,7 @@ dialog.narrow{max-width:520px; margin:0 auto}
 .snack span{overflow:hidden; text-overflow:ellipsis}
 .snack button{background:transparent; border:0; color:inherit; font-size:14px; font-weight:600; padding:10px 12px; border-radius:10px}
 
-@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important} .net svg{animation:none!important}}
 </style>
 </head>
 <body>
@@ -769,10 +812,14 @@ dialog.narrow{max-width:520px; margin:0 auto}
 <!-- the grid: built by render() from the saved links -->
 <main class="grid" id="grid" aria-label="Your pages"></main>
 
-<!-- the bar under the grid: Notes (with a dot when a note arrived since Notes was last open), Settings, Edit;
-     in Edit mode also Sort A–Z, at the left -->
+<!-- the bar under the grid: the connection icon (its state is in data-net, set by netShow(); the globe is path
+     .o, the cross shown when offline is path .x), Notes (with a dot when a note arrived since Notes was last
+     open), Settings, Edit; in Edit mode also Sort A–Z, at the left -->
 <nav class="actions" aria-label="Page actions">
     <button class="chip" id="sortBtn" type="button" hidden>Sort A–Z</button>
+    <button class="ib net" id="netBtn" type="button" data-net="checking" aria-label="Connection: checking">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path class="o" d="M3 12h18M12 3c2.6 2.5 3.9 5.5 3.9 9s-1.3 6.5-3.9 9c-2.6-2.5-3.9-5.5-3.9-9s1.3-6.5 3.9-9z"/><path class="x" d="M8.6 8.6l6.8 6.8M15.4 8.6l-6.8 6.8"/></svg>
+    </button>
     <button class="ib" id="notesBtn" type="button" aria-label="Notes">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"/></svg>
     </button>
@@ -2201,6 +2248,58 @@ async function nPeek(){
   }catch(e){}
 }
 
+/* ---------- connection ----------
+   #netBtn says whether the internet answers: grey while a check the eye should see is running, green when it
+   answered, red when it didn't. navigator.onLine only knows whether the device has a network at all (it stays
+   true on Wi-Fi that leads nowhere), so every check is a real request: HEAD for sw.js on this page's own
+   server, with a one-off tag in the address and cache: 'no-store', so that no cache can answer in the
+   server's place. Any reply from the server counts as online, even "not found". Two things tell it from a
+   stand-in that a service worker hands over when the network fails: its address still carries the tag (a
+   saved copy has the address it was saved under) and it has a Date header (a reply made up by a worker has
+   none). No reply within NET_WAIT counts as offline.
+   When: at load, when the page comes back to the front, when the browser reports that the network came, went
+   or changed, on a tap (which also says the result in words), and while the page is visible every NET_EVERY.
+   While offline it asks every NET_RETRY, to notice the way back; the first time already after NET_AGAIN,
+   because one lost request, or a network that has only just come up, should not leave the icon red for long.
+   The timed checks and the ones after a change of network keep the colour until their answer is in, so the
+   icon doesn't blink grey every minute. Nothing is asked while the page is hidden.
+   Opened as a file (no http) there is no server to ask, and navigator.onLine is all there is. */
+const netBtn = $('#netBtn');
+const NET_URL = /^https?:$/.test(location.protocol) ? new URL('sw.js', location.href).href : '';
+const NET_WAIT = 8000, NET_EVERY = 60000, NET_RETRY = 15000, NET_AGAIN = 3000;
+let netSeq = 0, netT = 0, netCtl = null, netFails = 0;
+function netShow(s){ netBtn.dataset.net = s; netBtn.title = 'Connection: ' + s; netBtn.setAttribute('aria-label', 'Connection: ' + s); }
+async function netAsk(){
+  if (!NET_URL) return navigator.onLine !== false;
+  const tag = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const ctl = netCtl = new AbortController(), t = setTimeout(() => ctl.abort(), NET_WAIT);
+  try{ const r = await fetch(NET_URL + '?ping=' + tag, {method: 'HEAD', cache: 'no-store', signal: ctl.signal}); return r.url.includes(tag) && r.headers.has('date'); }
+  catch(e){ return false; }
+  finally{ clearTimeout(t); }
+}
+/* seen === true turns the icon grey until the answer is in. Resolves to true (online), false (offline), or
+   null when a newer check took over. A check that starts cancels the one before it. */
+async function netCheck(seen){
+  const seq = ++netSeq; clearTimeout(netT); if (netCtl) netCtl.abort();
+  if (seen === true) netShow('checking');
+  const on = await netAsk();
+  if (seq !== netSeq) return null;
+  netShow(on ? 'online' : 'offline'); netFails = on ? 0 : netFails + 1;
+  clearTimeout(netT); if (!document.hidden) netT = setTimeout(netCheck, on ? NET_EVERY : netFails === 1 ? NET_AGAIN : NET_RETRY);
+  return on;
+}
+const netSoon = () => { if (!document.hidden){ clearTimeout(netT); netT = setTimeout(netCheck, 500); } };   /* a burst of network changes ends in one check */
+netBtn.addEventListener('click', async () => {
+  const on = await netCheck(true);
+  if (on === null || snackFn) return;   /* a newer check took over, or a snackbar with an action (Undo, Reload) is up: leave it */
+  toast(on ? 'You’re online.' : navigator.onLine === false ? 'You’re offline.' : 'No internet on this connection.');
+});
+document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(netT); else netCheck(true); });
+addEventListener('pageshow', e => { if (e.persisted) netCheck(true); });
+addEventListener('online', () => netCheck(true));
+addEventListener('offline', () => netCheck());   /* with no network the request fails at once, so red shows straight away */
+if (navigator.connection && navigator.connection.addEventListener) navigator.connection.addEventListener('change', netSoon);
+
 /* ---------- clock ---------- (runs again at the start of every minute) */
 const tEl = $('#time'), dEl = $('#date');
 function tick(){
@@ -2217,13 +2316,14 @@ function tick(){
    stored keys are loaded, and the database is asked for its newest note (the dot). sw.js keeps a copy of
    this page so it opens instantly and offline, and says "updated" when it fetched a newer one; the
    snackbar then offers Reload. navigator.storage.persist() asks the browser not to evict this site's
-   storage when the device runs low. */
+   storage when the device runs low. netCheck(true) is the connection icon's first check. */
 applyPrefs(); render(); tick();
 setTimeout(retryMissing, 1200);
 addEventListener('online', retryMissing);
 let legacyPass = ''; try{ legacyPass = localStorage.getItem(NPK) || ''; }catch(e){}
 if (legacyPass && NCRYPTO) nSetPass(legacyPass, true); else nLoadKeys();
 nPeek();
+netCheck(true);
 if ('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(() => {});
   navigator.serviceWorker.addEventListener('message', e => { if (e.data === 'updated') snack('This page was updated.', 'Reload', () => location.reload()); });
